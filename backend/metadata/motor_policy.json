@@ -1,0 +1,254 @@
+{
+  "version": "1.0.0",
+  "description": "Fully metadata-driven motor insurance policy pipeline",
+  "dataflows": [
+    {
+      "name": "motor-policy-ingestion",
+      "description": "Ingests, validates, enriches, and stores motor insurance policy data",
+      "version": "1.0.0",
+      "sources": [
+        {
+          "name": "policy_inputs",
+          "path": "/app/data/input/events/motor_policy/*",
+          "format": "JSON",
+          "options": {
+            "multiLine": true
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "name": "validation",
+          "type": "validate_fields",
+          "params": {
+            "input": "policy_inputs",
+            "valid_output": "validation_ok",
+            "invalid_output": "validation_ko",
+            "validations": [
+              {
+                "field": "policy_number",
+                "validations": [
+                  "notNull",
+                  "notEmpty"
+                ],
+                "error_message": "Policy number is required"
+              },
+              {
+                "field": "plate_number",
+                "validations": [
+                  "notEmpty",
+                  {
+                    "type": "regex",
+                    "params": {
+                      "pattern": "^[A-Z]{3}-[0-9]{3}$",
+                      "error_message": "Plate number must be format: ABC-123"
+                    }
+                  }
+                ]
+              },
+              {
+                "field": "driver_age",
+                "validations": [
+                  "notNull",
+                  "isNumeric",
+                  {
+                    "type": "rangeCheck",
+                    "params": {
+                      "min": 18,
+                      "max": 100,
+                      "error_message": "Driver age must be between 18 and 100"
+                    }
+                  }
+                ]
+              },
+              {
+                "field": "premium",
+                "validations": [
+                  "notNull",
+                  {
+                    "type": "rangeCheck",
+                    "params": {
+                      "min": 0,
+                      "max": 50000,
+                      "error_message": "Premium must be between 0 and 50000"
+                    }
+                  }
+                ]
+              },
+              {
+                "field": "vehicle_type",
+                "validations": [
+                  {
+                    "type": "inList",
+                    "params": {
+                      "values": ["sedan", "suv", "truck", "motorcycle", "van"],
+                      "error_message": "Invalid vehicle type"
+                    }
+                  }
+                ]
+              },
+              {
+                "field": "coverage_type",
+                "validations": [
+                  {
+                    "type": "inList",
+                    "params": {
+                      "values": ["comprehensive", "third_party", "collision"],
+                      "error_message": "Invalid coverage type"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "enrich_valid_records",
+          "type": "add_fields",
+          "params": {
+            "input": "validation_ok",
+            "addFields": [
+              {
+                "name": "ingestion_dt",
+                "function": "current_timestamp"
+              },
+              {
+                "name": "ingestion_date",
+                "function": "current_date"
+              },
+              {
+                "name": "pipeline_version",
+                "function": "literal",
+                "value": "1.0.0"
+              },
+              {
+                "name": "record_id",
+                "function": "uuid"
+              },
+              {
+                "name": "record_hash",
+                "function": "hash",
+                "columns": ["policy_number", "plate_number", "driver_age"],
+                "algorithm": "sha256"
+              },
+              {
+                "name": "plate_number_upper",
+                "function": "upper",
+                "column": "plate_number"
+              },
+              {
+                "name": "age_group",
+                "function": "when",
+                "condition": "driver_age < 25",
+                "then": "young",
+                "otherwise": "adult"
+              }
+            ]
+          }
+        },
+        {
+          "name": "enrich_invalid_records",
+          "type": "add_fields",
+          "params": {
+            "input": "validation_ko",
+            "addFields": [
+              {
+                "name": "rejection_timestamp",
+                "function": "current_timestamp"
+              },
+              {
+                "name": "rejection_date",
+                "function": "current_date"
+              },
+              {
+                "name": "pipeline_version",
+                "function": "literal",
+                "value": "1.0.0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "select_final_columns",
+          "type": "select_columns",
+          "params": {
+            "input": "enrich_valid_records",
+            "columns": [
+              "record_id",
+              "policy_number",
+              "driver_age",
+              "age_group",
+              "plate_number",
+              "plate_number_upper",
+              "premium",
+              "vehicle_type",
+              "coverage_type",
+              "policy_start_date",
+              "policy_end_date",
+              "driver_name",
+              "driver_license",
+              "record_hash",
+              "ingestion_dt",
+              "ingestion_date",
+              "pipeline_version"
+            ]
+          }
+        },
+        {
+          "name": "deduplicate_valid",
+          "type": "deduplicate",
+          "params": {
+            "input": "select_final_columns",
+            "subset": ["policy_number", "plate_number"]
+          }
+        }
+      ],
+      "sinks": [
+        {
+          "input": "deduplicate_valid",
+          "name": "standard-ok",
+          "paths": ["/app/data/output/events/motor_policy"],
+          "format": "JSON",
+          "saveMode": "APPEND",
+          "partitionBy": ["ingestion_date"]
+        },
+        {
+          "input": "enrich_invalid_records",
+          "name": "standard-ko",
+          "paths": ["/app/data/output/discards/motor_policy"],
+          "format": "JSON",
+          "saveMode": "APPEND",
+          "partitionBy": ["rejection_date"]
+        },
+        {
+          "input": "deduplicate_valid",
+          "name": "parquet-archive",
+          "paths": ["/app/data/output/archive/motor_policy"],
+          "format": "PARQUET",
+          "saveMode": "APPEND",
+          "partitionBy": ["ingestion_date", "vehicle_type"]
+        }
+      ],
+      "settings": {
+        "spark": {
+          "app_name": "ominimo-motor-policy-pipeline",
+          "master": "spark://spark-master:7077",
+          "config": {
+            "spark.executor.memory": "2g",
+            "spark.driver.memory": "1g",
+            "spark.sql.shuffle.partitions": "10",
+            "spark.sql.adaptive.enabled": "true"
+          }
+        },
+        "logging": {
+          "level": "INFO",
+          "format": "json"
+        },
+        "quality_rules": {
+          "min_valid_record_percentage": 80,
+          "max_duplicate_percentage": 5
+        }
+      }
+    }
+  ]
+}
