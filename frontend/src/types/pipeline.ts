@@ -29,6 +29,7 @@ export interface MetadataFile {
   size: number;
   created_at: string;
   version?: string;
+  description?: string;
   dataflows?: number;
 }
 

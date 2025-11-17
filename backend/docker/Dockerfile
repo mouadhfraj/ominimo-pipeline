@@ -1,37 +1,45 @@
-FROM apache/spark:3.5.0-python3
+# Ominimo Pipeline - Working Dockerfile
+# Tested and compatible with all requirements
 
-USER root
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    vim \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:3.10-bullseye
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
+# Install system dependencies (Java 11 is available in bullseye)
+RUN apt-get update && apt-get install -y \
+    openjdk-11-jdk-headless \
+    curl \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Java environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Copy requirements first (for better caching)
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/data/input /app/data/output
+RUN mkdir -p /app/data/input /app/data/output /app/logs /app/metadata && \
+    chmod -R 777 /app/data /app/logs /app/metadata
 
-# Set environment variables
+# Set Python path
 ENV PYTHONPATH=/app
-ENV SPARK_HOME=/opt/spark
-ENV PATH=$PATH:$SPARK_HOME/bin
 
-# Expose ports
-EXPOSE 8000 8080 8793
+# Expose FastAPI port
+EXPOSE 8000
 
-# Default command
-CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Default command: Run FastAPI
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

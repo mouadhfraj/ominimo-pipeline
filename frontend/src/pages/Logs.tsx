@@ -10,55 +10,71 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FileText, Download, Search, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
-
-const mockLogs = `
-[2024-01-15 10:30:15] INFO: Pipeline pip-2024-001 started
-[2024-01-15 10:30:16] INFO: Loading metadata: motor_insurance_config_v2.json
-[2024-01-15 10:30:17] INFO: Validating metadata structure
-[2024-01-15 10:30:17] INFO: Found 5 dataflows to process
-[2024-01-15 10:30:18] INFO: Starting dataflow: customer_data_ingestion
-[2024-01-15 10:30:20] INFO: Processing 10,000 records
-[2024-01-15 10:30:25] INFO: Dataflow customer_data_ingestion completed successfully
-[2024-01-15 10:30:26] INFO: Starting dataflow: risk_calculation
-[2024-01-15 10:30:28] INFO: Applying risk assessment rules
-[2024-01-15 10:30:32] INFO: Risk scores calculated for 10,000 customers
-[2024-01-15 10:30:33] INFO: Starting dataflow: premium_adjustment
-[2024-01-15 10:30:35] INFO: Applying premium calculation formulas
-[2024-01-15 10:30:40] INFO: Premium adjustments completed
-[2024-01-15 10:30:41] INFO: Starting dataflow: validation_checks
-[2024-01-15 10:30:43] INFO: Running data quality checks
-[2024-01-15 10:30:45] INFO: All validation checks passed
-[2024-01-15 10:30:46] INFO: Starting dataflow: output_generation
-[2024-01-15 10:30:48] INFO: Writing results to STANDARD_OK
-[2024-01-15 10:30:50] INFO: Output files generated successfully
-[2024-01-15 10:30:51] INFO: Pipeline pip-2024-001 completed successfully
-[2024-01-15 10:30:51] INFO: Total execution time: 36 seconds
-`.trim();
-
-const mockPipelineIds = [
-  "pip-2024-001",
-  "pip-2024-002",
-  "pip-2024-003",
-  "pip-2024-004",
-];
+import { api } from "@/services/api";
+import { useSearchParams } from "react-router-dom";
 
 const Logs = () => {
-  const [selectedPipeline, setSelectedPipeline] = useState("pip-2024-001");
+  const [searchParams] = useSearchParams();
+  const [selectedPipeline, setSelectedPipeline] = useState(searchParams.get("id") || "");
   const [searchQuery, setSearchQuery] = useState("");
+  const [logs, setLogs] = useState("");
+  const [pipelineIds, setPipelineIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const filteredLogs = mockLogs
+  useEffect(() => {
+    fetchPipelineIds();
+  }, []);
+
+  useEffect(() => {
+    if (selectedPipeline) {
+      fetchLogs();
+    }
+  }, [selectedPipeline]);
+
+  const fetchPipelineIds = async () => {
+    try {
+      const runs = await api.listPipelineRuns(50);
+      setPipelineIds(runs.map(run => run.pipeline_id));
+      if (!selectedPipeline && runs.length > 0) {
+        setSelectedPipeline(runs[0].pipeline_id);
+      }
+    } catch (error) {
+      toast.error("Failed to fetch pipeline IDs");
+    }
+  };
+
+  const fetchLogs = async () => {
+    try {
+      setLoading(true);
+      const logData = await api.getLogs(selectedPipeline);
+      setLogs(logData);
+    } catch (error) {
+      setLogs("No logs available for this pipeline");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredLogs = logs
     .split("\n")
     .filter((line) => line.toLowerCase().includes(searchQuery.toLowerCase()))
     .join("\n");
 
   const handleDownload = () => {
+    const blob = new Blob([logs], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedPipeline}_logs.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
     toast.success(`Downloading logs for ${selectedPipeline}`);
   };
 
   const handleRefresh = () => {
-    toast.success("Logs refreshed");
+    fetchLogs();
   };
 
   return (
@@ -86,10 +102,10 @@ const Logs = () => {
               <Label htmlFor="pipeline">Pipeline ID</Label>
               <Select value={selectedPipeline} onValueChange={setSelectedPipeline}>
                 <SelectTrigger id="pipeline">
-                  <SelectValue />
+                  <SelectValue placeholder="Select a pipeline" />
                 </SelectTrigger>
                 <SelectContent>
-                  {mockPipelineIds.map((id) => (
+                  {pipelineIds.map((id) => (
                     <SelectItem key={id} value={id}>
                       {id}
                     </SelectItem>
@@ -124,9 +140,15 @@ const Logs = () => {
           </div>
 
           <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <pre className="text-xs font-mono whitespace-pre-wrap break-words max-h-[600px] overflow-y-auto">
-              {filteredLogs || "No logs match your search criteria"}
-            </pre>
+            {loading ? (
+              <div className="flex items-center justify-center p-8">
+                <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <pre className="text-xs font-mono whitespace-pre-wrap break-words max-h-[600px] overflow-y-auto">
+                {filteredLogs || "No logs match your search criteria"}
+              </pre>
+            )}
           </div>
         </CardContent>
       </Card>

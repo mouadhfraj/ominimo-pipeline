@@ -2,15 +2,21 @@ from fastapi import FastAPI
 from loguru import logger
 from pathlib import Path
 from datetime import datetime
-
-from routers import router
+from fastapi.middleware.cors import CORSMiddleware
+from .routers import router
 
 app = FastAPI(
     title="Ominimo Motor Insurance Pipeline API",
     description="API for managing and monitoring motor insurance data pipelines",
     version="1.0.0"
 )
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8081"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(router)
 
 
@@ -24,4 +30,9 @@ async def startup():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "src.api.main:app",  # ← Use string for reload
+        host="0.0.0.0",
+        port=8000,
+        reload=True  # ← Auto-reload on changes
+    )

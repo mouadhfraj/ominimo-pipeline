@@ -11,8 +11,8 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
 from loguru import logger
 
-from serializers import PipelineRunRequest
-from src.pipeline import MetadataPipeline
+from .serializers import PipelineRunRequest
+from ..services.pipeline import MetadataPipeline
 
 router = APIRouter()
 
@@ -50,8 +50,7 @@ async def health_check():
 
 @router.get("/metadata")
 async def list_metadata():
-    metadata_dir = Path("/backend/metadata")
-
+    metadata_dir = Path(r"/app/metadata")
     if not metadata_dir.exists():
         return {"metadata_files": []}
 
@@ -102,7 +101,7 @@ async def upload_metadata(file: UploadFile = File(...)):
         if "dataflows" not in metadata:
             raise HTTPException(400, "Invalid metadata: missing 'dataflows'")
 
-        save_path = Path(f"/backend/metadata/{file.filename}")
+        save_path = Path(f"/app/metadata/{file.filename}")
         with open(save_path, "w") as f:
             json.dump(metadata, f, indent=2)
 

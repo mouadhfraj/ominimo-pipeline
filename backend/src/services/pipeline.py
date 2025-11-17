@@ -11,10 +11,10 @@ from pathlib import Path
 from pyspark.sql import SparkSession, DataFrame
 from loguru import logger
 
-from ingestion import DataIngestion
-from validation import DataValidator
-from transformation import DataTransformer
-from storage import DataStorage
+from .ingestion import DataIngestion
+from .validation import DataValidator
+from .transformation import DataTransformer
+from .storage import DataStorage
 
 
 class MetadataPipeline:

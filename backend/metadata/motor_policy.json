@@ -12,7 +12,7 @@
           "path": "/app/data/input/events/motor_policy/*",
           "format": "JSON",
           "options": {
-            "multiLine": true
+            "multiLine": false
           }
         }
       ],

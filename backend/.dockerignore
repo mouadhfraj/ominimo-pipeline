@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.log
+data/
+logs/
+airflow-data/
+airflow-db-data/
+.airflow/
+.docker/
+.git/
+.gitignore
+.ipynb_checkpoints

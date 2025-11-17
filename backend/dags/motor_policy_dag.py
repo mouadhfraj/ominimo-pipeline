@@ -4,6 +4,7 @@ Orchestrates daily ingestion and processing of motor policy data
 """
 
 import json
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -12,10 +13,12 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 
-import sys
+# Add the source directory to Python path
+sys.path.insert(0, '/opt/airflow/src')
 sys.path.insert(0, '/opt/airflow')
 
-from ..src.services.pipeline import MetadataPipeline
+# Import using absolute imports
+from src.services.pipeline import MetadataPipeline
 
 
 # Default arguments for DAG
@@ -45,174 +48,272 @@ dag = DAG(
 def validate_input_files(**context):
     """Validate that input files exist and are readable"""
     input_path = Path("/opt/airflow/data/input/events/motor_policy")
-    
+
     if not input_path.exists():
         raise FileNotFoundError(f"Input directory not found: {input_path}")
-    
+
     files = list(input_path.glob("*.json"))
-    
+
     if not files:
         raise FileNotFoundError(f"No JSON files found in {input_path}")
-    
+
     context['task_instance'].xcom_push(key='file_count', value=len(files))
-    
-    print(f"Found {len(files)} input files to process")
+
+    print(f"✓ Found {len(files)} input files to process")
+    for f in files:
+        print(f"  - {f.name}")
+
     return len(files)
 
 
 def load_metadata(**context):
     """Load and validate metadata configuration"""
-    metadata_path = "/opt/airflow/metadata/motor_policy.json"
-    
+    metadata_path = "/opt/airflow/metadata/motor_policy_airflow.json"
+
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
-    
+
     # Validate metadata structure
     if "dataflows" not in metadata:
         raise ValueError("Invalid metadata: missing 'dataflows'")
-    
+
     dataflow = metadata["dataflows"][0]
     context['task_instance'].xcom_push(key='dataflow_name', value=dataflow.get('name'))
-    
-    print(f"Loaded metadata for dataflow: {dataflow.get('name')}")
+    context['task_instance'].xcom_push(key='metadata_path', value=metadata_path)
+
+    print(f"✓ Loaded metadata for dataflow: {dataflow.get('name')}")
+    print(f"  Version: {dataflow.get('version')}")
+    print(f"  Sources: {len(dataflow.get('sources', []))}")
+    print(f"  Transformations: {len(dataflow.get('transformations', []))}")
+    print(f"  Sinks: {len(dataflow.get('sinks', []))}")
+
     return metadata_path
 
 
-def run_data_ingestion(**context):
-    """Execute data ingestion stage"""
-    metadata_path = context['task_instance'].xcom_pull(task_ids='load_metadata')
-    
+def run_full_pipeline(**context):
+    """Execute complete pipeline - ingestion, transformation, and storage"""
+    metadata_path = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_path'
+    )
+
+    print(f"Executing pipeline with metadata: {metadata_path}")
+
     pipeline = MetadataPipeline(metadata_path)
-    
-    try:
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        
-        dataflow = metadata["dataflows"][0]
-        pipeline.execute_ingestion(dataflow)
-        
-        # Store record counts in XCom
-        record_counts = {
-            name: df.count() 
-            for name, df in pipeline.dataframes.items()
-        }
-        
-        context['task_instance'].xcom_push(key='ingestion_counts', value=record_counts)
-        
-        print(f"Ingestion complete: {record_counts}")
-        return record_counts
-    finally:
-        pipeline.stop()
 
-
-def run_data_validation(**context):
-    """Execute data validation stage"""
-    metadata_path = context['task_instance'].xcom_pull(task_ids='load_metadata')
-    
-    pipeline = MetadataPipeline(metadata_path)
-    
-    try:
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        
-        dataflow = metadata["dataflows"][0]
-        
-        # Re-run ingestion (in production, you'd load from previous stage)
-        pipeline.execute_ingestion(dataflow)
-        pipeline.execute_transformations(dataflow)
-        
-        # Extract validation statistics
-        valid_count = pipeline.dataframes.get("validation_ok", None)
-        invalid_count = pipeline.dataframes.get("validation_ko", None)
-        
-        validation_stats = {
-            "valid_records": valid_count.count() if valid_count else 0,
-            "invalid_records": invalid_count.count() if invalid_count else 0
-        }
-        
-        context['task_instance'].xcom_push(key='validation_stats', value=validation_stats)
-        
-        print(f"Validation complete: {validation_stats}")
-        return validation_stats
-    finally:
-        pipeline.stop()
-
-
-def run_data_storage(**context):
-    """Execute data storage stage"""
-    metadata_path = context['task_instance'].xcom_pull(task_ids='load_metadata')
-    
-    pipeline = MetadataPipeline(metadata_path)
-    
     try:
         # Execute full pipeline
         stats = pipeline.execute()
-        
+
+        # Extract key metrics
+        ingestion_stats = stats.get('stages', {}).get('ingestion', {})
+        transformation_stats = stats.get('stages', {}).get('transformation', {})
+        storage_stats = stats.get('stages', {}).get('storage', {})
+
+        # Calculate validation metrics
+        valid_count = 0
+        invalid_count = 0
+
+        for transform in transformation_stats.get('transformations', []):
+            if transform.get('type') == 'validate_fields':
+                # These counts are in the input_count of subsequent transformations
+                pass
+
+        # Try to get actual counts from dataframes
+        if 'validation_ok' in pipeline.dataframes:
+            valid_count = pipeline.dataframes['validation_ok'].count()
+        if 'validation_ko' in pipeline.dataframes:
+            invalid_count = pipeline.dataframes['validation_ko'].count()
+
+        # Store in XCom
         context['task_instance'].xcom_push(key='pipeline_stats', value=stats)
-        
-        print(f"Storage complete. Pipeline status: {stats['status']}")
+        context['task_instance'].xcom_push(key='valid_count', value=valid_count)
+        context['task_instance'].xcom_push(key='invalid_count', value=invalid_count)
+
+        print(f"\n{'='*80}")
+        print(f"Pipeline Execution Summary")
+        print(f"{'='*80}")
+        print(f"Status: {stats['status']}")
+        print(f"Duration: {stats.get('duration_seconds', 0):.2f} seconds")
+        print(f"Valid Records: {valid_count}")
+        print(f"Invalid Records: {invalid_count}")
+        print(f"{'='*80}\n")
+
+        # Check if pipeline met quality standards
+        if stats['status'] != 'success':
+            raise RuntimeError(f"Pipeline failed with status: {stats['status']}")
+
         return stats
+
+    except Exception as e:
+        print(f"✗ Pipeline execution failed: {str(e)}")
+        raise
     finally:
         pipeline.stop()
+
+
+def check_quality_metrics(**context):
+    """Check if pipeline met quality standards"""
+    valid_count = context['task_instance'].xcom_pull(
+        task_ids='run_pipeline',
+        key='valid_count'
+    )
+    invalid_count = context['task_instance'].xcom_pull(
+        task_ids='run_pipeline',
+        key='invalid_count'
+    )
+
+    total_count = valid_count + invalid_count
+
+    if total_count == 0:
+        raise ValueError("No records processed!")
+
+    valid_percentage = (valid_count / total_count) * 100
+
+    # Load quality rules from metadata
+    metadata_path = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_path'
+    )
+
+    with open(metadata_path, 'r') as f:
+        metadata = json.load(f)
+
+    quality_rules = metadata['dataflows'][0].get('settings', {}).get('quality_rules', {})
+    min_valid_percentage = quality_rules.get('min_valid_record_percentage', 80)
+
+    print(f"\n{'='*80}")
+    print(f"Quality Metrics Check")
+    print(f"{'='*80}")
+    print(f"Total Records: {total_count}")
+    print(f"Valid Records: {valid_count} ({valid_percentage:.2f}%)")
+    print(f"Invalid Records: {invalid_count} ({100-valid_percentage:.2f}%)")
+    print(f"Required Minimum: {min_valid_percentage}%")
+
+    if valid_percentage < min_valid_percentage:
+        print(f"✗ FAILED: Valid percentage {valid_percentage:.2f}% is below minimum {min_valid_percentage}%")
+        print(f"{'='*80}\n")
+        raise ValueError(
+            f"Quality check failed: {valid_percentage:.2f}% valid records "
+            f"(minimum: {min_valid_percentage}%)"
+        )
+
+    print(f"✓ PASSED: Quality standards met")
+    print(f"{'='*80}\n")
+
+    return {
+        "total": total_count,
+        "valid": valid_count,
+        "invalid": invalid_count,
+        "valid_percentage": valid_percentage,
+        "quality_check": "PASSED"
+    }
 
 
 def generate_report(**context):
     """Generate pipeline execution report"""
-    ingestion_counts = context['task_instance'].xcom_pull(
-        task_ids='run_ingestion', 
-        key='ingestion_counts'
-    )
-    validation_stats = context['task_instance'].xcom_pull(
-        task_ids='run_validation', 
-        key='validation_stats'
-    )
     pipeline_stats = context['task_instance'].xcom_pull(
-        task_ids='run_storage', 
+        task_ids='run_pipeline',
         key='pipeline_stats'
     )
-    
+    quality_metrics = context['task_instance'].xcom_pull(
+        task_ids='check_quality'
+    )
+
+    execution_date = context['execution_date']
+    dag_run_id = context['dag_run'].run_id
+
     report = {
-        "execution_date": context['execution_date'].isoformat(),
-        "dag_run_id": context['dag_run'].run_id,
-        "ingestion": ingestion_counts,
-        "validation": validation_stats,
-        "pipeline": pipeline_stats
+        "execution_date": execution_date.isoformat(),
+        "dag_run_id": dag_run_id,
+        "pipeline_id": pipeline_stats.get('pipeline_id', 'unknown'),
+        "status": pipeline_stats.get('status'),
+        "duration_seconds": pipeline_stats.get('duration_seconds'),
+        "quality_metrics": quality_metrics,
+        "stages": pipeline_stats.get('stages', {}),
+        "metadata_version": pipeline_stats.get('metadata_version')
     }
-    
+
     # Save report
-    report_path = Path(f"/opt/airflow/logs/report_{context['execution_date'].strftime('%Y%m%d')}.json")
+    report_dir = Path("/opt/airflow/logs/reports")
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = report_dir / f"motor_policy_{execution_date.strftime('%Y%m%d_%H%M%S')}.json"
+
     with open(report_path, 'w') as f:
         json.dump(report, f, indent=2, default=str)
-    
-    print(f"Report generated: {report_path}")
+
+    print(f"\n{'='*80}")
+    print(f"Execution Report")
+    print(f"{'='*80}")
     print(json.dumps(report, indent=2, default=str))
-    
+    print(f"{'='*80}")
+    print(f"Report saved to: {report_path}")
+    print(f"{'='*80}\n")
+
     return report
+
+
+def send_notification(**context):
+    """Send notification (email/slack) about pipeline execution"""
+    report = context['task_instance'].xcom_pull(task_ids='generate_report')
+
+    status = report['status']
+    quality = report['quality_metrics']
+
+    # Format notification message
+    message = f"""
+Motor Policy Pipeline Execution Report
+{'='*50}
+
+Status: {status.upper()}
+Execution Date: {report['execution_date']}
+Duration: {report['duration_seconds']:.2f} seconds
+
+Data Quality:
+  Total Records: {quality['total']}
+  Valid Records: {quality['valid']} ({quality['valid_percentage']:.2f}%)
+  Invalid Records: {quality['invalid']}
+  Quality Check: {quality['quality_check']}
+
+Pipeline ID: {report['pipeline_id']}
+Metadata Version: {report['metadata_version']}
+"""
+
+    print(message)
+
+    # In production, send via email or Slack
+    # For now, just log
+    print("✓ Notification logged (configure email/Slack for actual notifications)")
+
+    return message
 
 
 def cleanup_old_files(**context):
     """Clean up old processed files (older than 7 days)"""
-    from datetime import datetime, timedelta
-    
     cutoff_date = datetime.now() - timedelta(days=7)
-    
+
     directories = [
         Path("/opt/airflow/data/output/events/motor_policy"),
-        Path("/opt/airflow/data/output/discards/motor_policy")
+        Path("/opt/airflow/data/output/discards/motor_policy"),
+        Path("/opt/airflow/logs/reports")
     ]
-    
+
     deleted_count = 0
-    
+
     for directory in directories:
         if directory.exists():
             for file_path in directory.rglob("*"):
                 if file_path.is_file():
                     file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
                     if file_mtime < cutoff_date:
-                        file_path.unlink()
-                        deleted_count += 1
-    
-    print(f"Cleaned up {deleted_count} old files")
+                        try:
+                            file_path.unlink()
+                            deleted_count += 1
+                        except Exception as e:
+                            print(f"Failed to delete {file_path}: {e}")
+
+    print(f"✓ Cleaned up {deleted_count} old files (older than 7 days)")
     return deleted_count
 
 
@@ -231,23 +332,17 @@ load_metadata_task = PythonOperator(
     dag=dag
 )
 
-run_ingestion = PythonOperator(
-    task_id='run_ingestion',
-    python_callable=run_data_ingestion,
+run_pipeline = PythonOperator(
+    task_id='run_pipeline',
+    python_callable=run_full_pipeline,
     provide_context=True,
+    execution_timeout=timedelta(hours=1),
     dag=dag
 )
 
-run_validation = PythonOperator(
-    task_id='run_validation',
-    python_callable=run_data_validation,
-    provide_context=True,
-    dag=dag
-)
-
-run_storage = PythonOperator(
-    task_id='run_storage',
-    python_callable=run_data_storage,
+check_quality = PythonOperator(
+    task_id='check_quality',
+    python_callable=check_quality_metrics,
     provide_context=True,
     dag=dag
 )
@@ -255,6 +350,13 @@ run_storage = PythonOperator(
 generate_report_task = PythonOperator(
     task_id='generate_report',
     python_callable=generate_report,
+    provide_context=True,
+    dag=dag
+)
+
+send_notification_task = PythonOperator(
+    task_id='send_notification',
+    python_callable=send_notification,
     provide_context=True,
     dag=dag
 )
@@ -267,4 +369,12 @@ cleanup_task = PythonOperator(
 )
 
 # Define task dependencies
-validate_input >> load_metadata_task >> run_ingestion >> run_validation >> run_storage >> generate_report_task >> cleanup_task
+(
+    validate_input
+    >> load_metadata_task
+    >> run_pipeline
+    >> check_quality
+    >> generate_report_task
+    >> send_notification_task
+    >> cleanup_task
+)

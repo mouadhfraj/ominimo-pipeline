@@ -11,53 +11,47 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PipelineRun } from "@/types/pipeline";
-import { Search, Eye, XCircle } from "lucide-react";
-import { useState } from "react";
+import { Search, Eye, XCircle, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-
-// Mock data
-const mockRuns: PipelineRun[] = [
-  {
-    pipeline_id: "pip-2024-001",
-    metadata_path: "motor_insurance_config_v2.json",
-    status: "running",
-    start_time: "2024-01-15T10:30:00Z",
-  },
-  {
-    pipeline_id: "pip-2024-002",
-    metadata_path: "claims_processing_v1.json",
-    status: "success",
-    start_time: "2024-01-15T09:15:00Z",
-    end_time: "2024-01-15T09:18:30Z",
-  },
-  {
-    pipeline_id: "pip-2024-003",
-    metadata_path: "premium_calculation_v3.json",
-    status: "failed",
-    start_time: "2024-01-15T08:45:00Z",
-    end_time: "2024-01-15T08:47:15Z",
-    error_message: "Validation error in dataflow step 3",
-  },
-  {
-    pipeline_id: "pip-2024-004",
-    metadata_path: "risk_assessment_v2.json",
-    status: "success",
-    start_time: "2024-01-15T08:00:00Z",
-    end_time: "2024-01-15T08:02:45Z",
-  },
-  {
-    pipeline_id: "pip-2024-005",
-    metadata_path: "customer_segmentation_v1.json",
-    status: "success",
-    start_time: "2024-01-15T07:30:00Z",
-    end_time: "2024-01-15T07:33:15Z",
-  },
-];
+import { api } from "@/services/api";
+import { toast } from "sonner";
 
 const PipelineRuns = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [runs, setRuns] = useState<PipelineRun[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredRuns = mockRuns.filter(
+  const fetchRuns = async () => {
+    try {
+      setLoading(true);
+      const data = await api.listPipelineRuns(50);
+      setRuns(data);
+    } catch (error) {
+      toast.error("Failed to fetch pipeline runs");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRuns();
+    const interval = setInterval(fetchRuns, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCancel = async (pipelineId: string) => {
+    try {
+      await api.cancelPipeline(pipelineId);
+      toast.success("Pipeline cancelled");
+      fetchRuns();
+    } catch (error) {
+      toast.error("Failed to cancel pipeline");
+    }
+  };
+
+  const filteredRuns = runs.filter(
     (run) =>
       run.pipeline_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       run.metadata_path.toLowerCase().includes(searchQuery.toLowerCase())
@@ -71,13 +65,27 @@ const PipelineRuns = () => {
     return `${minutes}m ${seconds}s`;
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Pipeline Runs</h1>
-        <p className="text-muted-foreground mt-1">
-          View and manage all pipeline executions
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Pipeline Runs</h1>
+          <p className="text-muted-foreground mt-1">
+            View and manage all pipeline executions
+          </p>
+        </div>
+        <Button onClick={fetchRuns} variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh
+        </Button>
       </div>
 
       <Card>
@@ -132,7 +140,11 @@ const PipelineRuns = () => {
                         </Button>
                       </Link>
                       {run.status === "running" && (
-                        <Button variant="ghost" size="sm">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleCancel(run.pipeline_id)}
+                        >
                           <XCircle className="h-4 w-4 text-destructive" />
                         </Button>
                       )}

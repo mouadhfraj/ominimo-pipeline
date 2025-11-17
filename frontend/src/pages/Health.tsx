@@ -8,19 +8,48 @@ import {
   HardDrive, 
   Clock,
   CheckCircle2,
-  Server
+  Server,
+  RefreshCw
 } from "lucide-react";
 import { HealthStatus } from "@/types/pipeline";
-
-const mockHealth: HealthStatus = {
-  status: "healthy",
-  active_pipelines: 3,
-  uptime: 345600, // seconds (4 days)
-  memory_usage: 45,
-  cpu_usage: 32,
-};
+import { useState, useEffect } from "react";
+import { api } from "@/services/api";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 const Health = () => {
+  const [healthData, setHealthData] = useState<HealthStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchHealth = async () => {
+    try {
+      setLoading(true);
+      const data = await api.getHealth();
+      setHealthData(data);
+    } catch (error) {
+      toast.error("Failed to fetch health status");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!healthData) return null;
+
   const formatUptime = (seconds: number) => {
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
@@ -50,30 +79,36 @@ const Health = () => {
             Monitor pipeline infrastructure and performance metrics
           </p>
         </div>
-        <Badge variant={getStatusColor(mockHealth.status)} className="text-lg px-4 py-2">
-          <CheckCircle2 className="h-4 w-4 mr-2" />
-          {mockHealth.status.toUpperCase()}
-        </Badge>
+        <div className="flex gap-2 items-center">
+          <Button onClick={fetchHealth} variant="outline" size="sm">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+          <Badge variant={getStatusColor(healthData.status)} className="text-lg px-4 py-2">
+            <CheckCircle2 className="h-4 w-4 mr-2" />
+            {healthData.status.toUpperCase()}
+          </Badge>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="System Status"
-          value={mockHealth.status}
+          value={healthData.status}
           icon={CheckCircle2}
           variant="success"
           description="All systems operational"
         />
         <StatCard
           title="Active Pipelines"
-          value={mockHealth.active_pipelines}
+          value={healthData.active_pipelines}
           icon={Activity}
           variant="info"
           description="Currently running"
         />
         <StatCard
           title="Uptime"
-          value={formatUptime(mockHealth.uptime)}
+          value={formatUptime(healthData.uptime)}
           icon={Clock}
           description="System availability"
         />
@@ -99,11 +134,11 @@ const Health = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Current Usage</span>
-                <span className="font-bold text-2xl">{mockHealth.cpu_usage}%</span>
+                <span className="font-bold text-2xl">{healthData.cpu_usage?.toFixed(1) || 0}%</span>
               </div>
-              <Progress value={mockHealth.cpu_usage} className="h-3" />
+              <Progress value={healthData.cpu_usage || 0} className="h-3" />
               <p className="text-xs text-muted-foreground">
-                {mockHealth.cpu_usage! < 50 ? "Normal" : mockHealth.cpu_usage! < 80 ? "Moderate" : "High"} load
+                {(healthData.cpu_usage || 0) < 50 ? "Normal" : (healthData.cpu_usage || 0) < 80 ? "Moderate" : "High"} load
               </p>
             </div>
             <div className="grid grid-cols-3 gap-4 pt-4 border-t border-border">
@@ -135,11 +170,11 @@ const Health = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Current Usage</span>
-                <span className="font-bold text-2xl">{mockHealth.memory_usage}%</span>
+                <span className="font-bold text-2xl">{healthData.memory_usage?.toFixed(1) || 0}%</span>
               </div>
-              <Progress value={mockHealth.memory_usage} className="h-3" />
+              <Progress value={healthData.memory_usage || 0} className="h-3" />
               <p className="text-xs text-muted-foreground">
-                {mockHealth.memory_usage! < 60 ? "Healthy" : mockHealth.memory_usage! < 85 ? "Moderate" : "Critical"} allocation
+                {(healthData.memory_usage || 0) < 60 ? "Healthy" : (healthData.memory_usage || 0) < 85 ? "Moderate" : "Critical"} allocation
               </p>
             </div>
             <div className="grid grid-cols-3 gap-4 pt-4 border-t border-border">

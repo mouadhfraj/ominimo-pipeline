@@ -8,53 +8,53 @@ import {
   XCircle, 
   TrendingUp, 
   PlayCircle,
-  Clock
+  Clock,
+  RefreshCw
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PipelineRun, PipelineStats } from "@/types/pipeline";
-
-// Mock data - replace with API calls
-const mockStats: PipelineStats = {
-  total_runs: 1247,
-  successful_runs: 1098,
-  failed_runs: 149,
-  running_pipelines: 3,
-  success_rate: 88.05,
-  avg_duration: 145,
-};
-
-const mockRecentRuns: PipelineRun[] = [
-  {
-    pipeline_id: "pip-2024-001",
-    metadata_path: "motor_insurance_config_v2.json",
-    status: "running",
-    start_time: "2024-01-15T10:30:00Z",
-  },
-  {
-    pipeline_id: "pip-2024-002",
-    metadata_path: "claims_processing_v1.json",
-    status: "success",
-    start_time: "2024-01-15T09:15:00Z",
-    end_time: "2024-01-15T09:18:30Z",
-  },
-  {
-    pipeline_id: "pip-2024-003",
-    metadata_path: "premium_calculation_v3.json",
-    status: "failed",
-    start_time: "2024-01-15T08:45:00Z",
-    end_time: "2024-01-15T08:47:15Z",
-    error_message: "Validation error in dataflow step 3",
-  },
-  {
-    pipeline_id: "pip-2024-004",
-    metadata_path: "risk_assessment_v2.json",
-    status: "success",
-    start_time: "2024-01-15T08:00:00Z",
-    end_time: "2024-01-15T08:02:45Z",
-  },
-];
+import { useState, useEffect } from "react";
+import { api } from "@/services/api";
+import { toast } from "sonner";
 
 const Dashboard = () => {
+  const [stats, setStats] = useState<PipelineStats | null>(null);
+  const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [statsData, runsData] = await Promise.all([
+        api.getStats(),
+        api.listPipelineRuns(5)
+      ]);
+      setStats(statsData);
+      setRecentRuns(runsData);
+    } catch (error) {
+      toast.error("Failed to fetch dashboard data");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!stats) return null;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -64,24 +64,30 @@ const Dashboard = () => {
             Motor insurance pipeline monitoring and control
           </p>
         </div>
-        <Link to="/execute">
-          <Button size="lg" className="gap-2">
-            <PlayCircle className="h-5 w-5" />
-            Execute Pipeline
+        <div className="flex gap-2">
+          <Button onClick={fetchData} variant="outline" size="sm">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
           </Button>
-        </Link>
+          <Link to="/execute">
+            <Button size="lg" className="gap-2">
+              <PlayCircle className="h-5 w-5" />
+              Execute Pipeline
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Runs"
-          value={mockStats.total_runs}
+          value={stats.total_runs}
           icon={Activity}
           description="All time pipeline executions"
         />
         <StatCard
           title="Success Rate"
-          value={`${mockStats.success_rate}%`}
+          value={`${stats.success_rate.toFixed(1)}%`}
           icon={TrendingUp}
           variant="success"
           description="Overall pipeline success"
@@ -89,14 +95,14 @@ const Dashboard = () => {
         />
         <StatCard
           title="Active Pipelines"
-          value={mockStats.running_pipelines}
+          value={stats.running_pipelines}
           icon={Clock}
           variant="info"
           description="Currently running"
         />
         <StatCard
           title="Failed Runs"
-          value={mockStats.failed_runs}
+          value={stats.failed_runs}
           icon={XCircle}
           variant="destructive"
           description="Requires attention"
@@ -117,13 +123,13 @@ const Dashboard = () => {
                   <span className="text-sm font-medium">Successful</span>
                 </div>
                 <span className="text-2xl font-bold text-success">
-                  {mockStats.successful_runs}
+                  {stats.successful_runs}
                 </span>
               </div>
               <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-success"
-                  style={{ width: `${mockStats.success_rate}%` }}
+                  style={{ width: `${stats.success_rate}%` }}
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -132,13 +138,13 @@ const Dashboard = () => {
                   <span className="text-sm font-medium">Failed</span>
                 </div>
                 <span className="text-2xl font-bold text-destructive">
-                  {mockStats.failed_runs}
+                  {stats.failed_runs}
                 </span>
               </div>
               <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-destructive"
-                  style={{ width: `${100 - mockStats.success_rate}%` }}
+                  style={{ width: `${100 - stats.success_rate}%` }}
                 />
               </div>
             </div>
@@ -152,7 +158,7 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {mockRecentRuns.map((run) => (
+              {recentRuns.map((run) => (
                 <Link 
                   key={run.pipeline_id} 
                   to={`/runs/${run.pipeline_id}`}

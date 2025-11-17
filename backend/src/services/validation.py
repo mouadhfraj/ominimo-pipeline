@@ -229,8 +229,8 @@ class DataValidator:
         validation_columns: List[str],
         validations: List[Dict]
     ) -> DataFrame:
-        """Create aggregated validation errors map"""
-        
+        """Create aggregated validation errors map - FIXED VERSION"""
+
         # Build field -> column mapping
         field_to_cols = {}
         for val_col in validation_columns:
@@ -241,24 +241,31 @@ class DataValidator:
                 if field not in field_to_cols:
                     field_to_cols[field] = []
                 field_to_cols[field].append(val_col)
-        
-        # Create map expression dynamically
-        map_entries = []
+
+        # Create map expression dynamically - FIXED: Use map_from_arrays instead of create_map
+        map_keys = []
+        map_values = []
+
         for field, cols in field_to_cols.items():
-            # Concatenate all errors for this field
-            error_expr = F.coalesce(
-                *[F.col(col) for col in cols]
-            )
-            map_entries.extend([F.lit(field), error_expr])
-        
-        # Create the validation_errors map
-        if map_entries:
-            df = df.withColumn("_temp_map", F.create_map(*map_entries))
-            
-            # Filter out null values from map
+            # For each field, concatenate all errors (if any)
+            error_expr = F.coalesce(*[F.col(col) for col in cols])
+            map_keys.append(F.lit(field))
+            map_values.append(error_expr)
+
+        # Create the validation_errors map using map_from_arrays
+        if map_keys:
+            # Create arrays of keys and values
+            keys_array = F.array(*map_keys)
+            values_array = F.array(*map_values)
+
+            # Create map from arrays
+            df = df.withColumn("_temp_map", F.map_from_arrays(keys_array, values_array))
+
+            # Filter out null values from map using map_filter (Spark 3.0+)
+            # Alternative: Use transform_values to handle nulls
             df = df.withColumn(
                 "validation_errors",
-                F.expr("filter(_temp_map, (k, v) -> v is not null)")
+                F.expr("map_filter(_temp_map, (k, v) -> v is not null)")
             )
             
             # Count errors

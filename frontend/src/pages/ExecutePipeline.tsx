@@ -10,38 +10,62 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { PlayCircle, FileJson, Settings } from "lucide-react";
-import { useState } from "react";
+import { PlayCircle, FileJson, Settings, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-
-const mockMetadataFiles = [
-  "motor_insurance_config_v2.json",
-  "claims_processing_v1.json",
-  "premium_calculation_v3.json",
-  "risk_assessment_v2.json",
-];
+import { api } from "@/services/api";
+import { MetadataFile } from "@/types/pipeline";
 
 const ExecutePipeline = () => {
+  const navigate = useNavigate();
   const [selectedMetadata, setSelectedMetadata] = useState("");
   const [asyncExecution, setAsyncExecution] = useState(true);
   const [parameters, setParameters] = useState("");
-  const navigate = useNavigate();
+  const [metadataFiles, setMetadataFiles] = useState<MetadataFile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
 
-  const handleExecute = () => {
+  useEffect(() => {
+    fetchMetadata();
+  }, []);
+
+  const fetchMetadata = async () => {
+    try {
+      setLoading(true);
+      const data = await api.listMetadata();
+      setMetadataFiles(data);
+    } catch (error) {
+      toast.error("Failed to fetch metadata files");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExecute = async () => {
     if (!selectedMetadata) {
       toast.error("Please select a metadata file");
       return;
     }
 
-    const pipelineId = `pip-${Date.now()}`;
-    toast.success(`Pipeline ${pipelineId} started successfully`, {
-      description: asyncExecution ? "Running in background" : "Executing synchronously",
-    });
-    
-    setTimeout(() => {
-      navigate("/runs");
-    }, 1500);
+    try {
+      setExecuting(true);
+      const result = await api.runPipeline(selectedMetadata, asyncExecution);
+      
+      toast.success(
+        asyncExecution 
+          ? `Pipeline queued: ${result.pipeline_id}` 
+          : "Pipeline completed successfully"
+      );
+
+      setTimeout(() => {
+        navigate(`/logs?id=${result.pipeline_id}`);
+      }, 1000);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to execute pipeline");
+    } finally {
+      setExecuting(false);
+    }
   };
 
   return (
@@ -71,9 +95,9 @@ const ExecutePipeline = () => {
                 <SelectValue placeholder="Select a metadata file" />
               </SelectTrigger>
               <SelectContent>
-                {mockMetadataFiles.map((file) => (
-                  <SelectItem key={file} value={file}>
-                    {file}
+                {metadataFiles.map((file) => (
+                  <SelectItem key={file.path} value={file.path}>
+                    {file.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -129,9 +153,19 @@ const ExecutePipeline = () => {
               size="lg" 
               className="w-full gap-2"
               onClick={handleExecute}
+              disabled={executing || loading}
             >
-              <PlayCircle className="h-5 w-5" />
-              Execute Pipeline
+              {executing ? (
+                <>
+                  <RefreshCw className="h-5 w-5 animate-spin" />
+                  Executing...
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="h-5 w-5" />
+                  Execute Pipeline
+                </>
+              )}
             </Button>
           </div>
         </CardContent>
