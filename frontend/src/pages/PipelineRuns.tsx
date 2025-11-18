@@ -54,7 +54,7 @@ const PipelineRuns = () => {
   const filteredRuns = runs.filter(
     (run) =>
       run.pipeline_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      run.metadata_path.toLowerCase().includes(searchQuery.toLowerCase())
+      run.metadata_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const formatDuration = (start: string, end?: string) => {
@@ -107,8 +107,9 @@ const PipelineRuns = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Pipeline ID</TableHead>
-                <TableHead>Metadata File</TableHead>
+                <TableHead>Metadata</TableHead>
                 <TableHead>Status</TableHead>
+
                 <TableHead>Start Time</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -121,7 +122,7 @@ const PipelineRuns = () => {
                     {run.pipeline_id}
                   </TableCell>
                   <TableCell className="max-w-xs truncate">
-                    {run.metadata_path}
+                    {run.metadata_name}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={run.status} />

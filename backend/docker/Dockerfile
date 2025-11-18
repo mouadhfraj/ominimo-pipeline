@@ -24,6 +24,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+RUN pip install --no-cache-dir \
+    sqlalchemy==2.0.23 \
+    psycopg2-binary==2.9.9 \
+    alembic==1.12.1
+
 # Copy application code
 COPY . .
 

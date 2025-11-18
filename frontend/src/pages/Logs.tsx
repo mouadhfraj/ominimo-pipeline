@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { 
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -14,12 +15,13 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { useSearchParams } from "react-router-dom";
+import { PipelineLog } from "@/types/pipeline";
 
 const Logs = () => {
   const [searchParams] = useSearchParams();
   const [selectedPipeline, setSelectedPipeline] = useState(searchParams.get("id") || "");
   const [searchQuery, setSearchQuery] = useState("");
-  const [logs, setLogs] = useState("");
+  const [logs, setLogs] = useState<PipelineLog[]>([]);
   const [pipelineIds, setPipelineIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -46,31 +48,51 @@ const Logs = () => {
   };
 
   const fetchLogs = async () => {
+    if (!selectedPipeline) return;
     try {
       setLoading(true);
       const logData = await api.getLogs(selectedPipeline);
       setLogs(logData);
     } catch (error) {
-      setLogs("No logs available for this pipeline");
+      toast.error("Failed to fetch logs");
+      setLogs([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredLogs = logs
-    .split("\n")
-    .filter((line) => line.toLowerCase().includes(searchQuery.toLowerCase()))
-    .join("\n");
+  const filteredLogs = logs.filter((log) =>
+    log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    log.level.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (log.stage && log.stage.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
   const handleDownload = () => {
-    const blob = new Blob([logs], { type: "text/plain" });
+    const logText = logs
+      .map((log) => `[${log.timestamp}] [${log.level}] ${log.stage ? `[${log.stage}] ` : ""}${log.message}`)
+      .join("\n");
+    const blob = new Blob([logText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${selectedPipeline}_logs.txt`;
+    a.download = `pipeline-${selectedPipeline}-logs.txt`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(`Downloading logs for ${selectedPipeline}`);
+    toast.success("Logs downloaded successfully");
+  };
+
+  const getLevelColor = (level: string) => {
+    switch (level.toUpperCase()) {
+      case "ERROR":
+      case "CRITICAL":
+        return "destructive";
+      case "WARNING":
+        return "warning";
+      case "INFO":
+        return "default";
+      default:
+        return "secondary";
+    }
   };
 
   const handleRefresh = () => {
@@ -145,9 +167,42 @@ const Logs = () => {
                 <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <pre className="text-xs font-mono whitespace-pre-wrap break-words max-h-[600px] overflow-y-auto">
-                {filteredLogs || "No logs match your search criteria"}
-              </pre>
+              <div className="space-y-2">
+                {filteredLogs.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-8">No logs available</p>
+                ) : (
+                  filteredLogs.map((log, index) => (
+                    <div
+                      key={index}
+                      className="bg-muted/50 p-3 rounded-lg border border-border hover:bg-muted transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Badge variant={getLevelColor(log.level)} className="mt-0.5">
+                          {log.level}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(log.timestamp).toLocaleString()}
+                            </span>
+                            {log.stage && (
+                              <Badge variant="outline" className="text-xs">
+                                {log.stage}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm break-words">{log.message}</p>
+                          {log.details && (
+                            <pre className="mt-2 text-xs bg-background p-2 rounded overflow-auto">
+                              {JSON.stringify(log.details, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
           </div>
         </CardContent>

@@ -81,7 +81,13 @@
                   {
                     "type": "inList",
                     "params": {
-                      "values": ["sedan", "suv", "truck", "motorcycle", "van"],
+                      "values": [
+                        "sedan",
+                        "suv",
+                        "truck",
+                        "motorcycle",
+                        "van"
+                      ],
                       "error_message": "Invalid vehicle type"
                     }
                   }
@@ -93,7 +99,11 @@
                   {
                     "type": "inList",
                     "params": {
-                      "values": ["comprehensive", "third_party", "collision"],
+                      "values": [
+                        "comprehensive",
+                        "third_party",
+                        "collision"
+                      ],
                       "error_message": "Invalid coverage type"
                     }
                   }
@@ -128,7 +138,11 @@
               {
                 "name": "record_hash",
                 "function": "hash",
-                "columns": ["policy_number", "plate_number", "driver_age"],
+                "columns": [
+                  "policy_number",
+                  "plate_number",
+                  "driver_age"
+                ],
                 "algorithm": "sha256"
               },
               {
@@ -199,7 +213,10 @@
           "type": "deduplicate",
           "params": {
             "input": "select_final_columns",
-            "subset": ["policy_number", "plate_number"]
+            "subset": [
+              "policy_number",
+              "plate_number"
+            ]
           }
         }
       ],
@@ -207,26 +224,39 @@
         {
           "input": "deduplicate_valid",
           "name": "standard-ok",
-          "paths": ["/app/data/output/events/motor_policy"],
+          "paths": [
+            "/app/data/output/events/motor_policy"
+          ],
           "format": "JSON",
           "saveMode": "APPEND",
-          "partitionBy": ["ingestion_date"]
+          "partitionBy": [
+            "ingestion_date"
+          ]
         },
         {
           "input": "enrich_invalid_records",
           "name": "standard-ko",
-          "paths": ["/app/data/output/discards/motor_policy"],
+          "paths": [
+            "/app/data/output/discards/motor_policy"
+          ],
           "format": "JSON",
           "saveMode": "APPEND",
-          "partitionBy": ["rejection_date"]
+          "partitionBy": [
+            "rejection_date"
+          ]
         },
         {
           "input": "deduplicate_valid",
           "name": "parquet-archive",
-          "paths": ["/app/data/output/archive/motor_policy"],
+          "paths": [
+            "/app/data/output/archive/motor_policy"
+          ],
           "format": "PARQUET",
           "saveMode": "APPEND",
-          "partitionBy": ["ingestion_date", "vehicle_type"]
+          "partitionBy": [
+            "ingestion_date",
+            "vehicle_type"
+          ]
         }
       ],
       "settings": {

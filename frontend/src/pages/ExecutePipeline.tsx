@@ -96,8 +96,8 @@ const ExecutePipeline = () => {
               </SelectTrigger>
               <SelectContent>
                 {metadataFiles.map((file) => (
-                  <SelectItem key={file.path} value={file.path}>
-                    {file.name}
+                  <SelectItem key={file.name} value={file.name}>
+                    {file.name} {file.version && `(v${file.version})`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -107,19 +107,7 @@ const ExecutePipeline = () => {
             </p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="parameters">Additional Parameters (Optional)</Label>
-            <Textarea
-              id="parameters"
-              placeholder='{"batch_size": 1000, "parallel_jobs": 4}'
-              value={parameters}
-              onChange={(e) => setParameters(e.target.value)}
-              className="font-mono text-sm min-h-[100px]"
-            />
-            <p className="text-xs text-muted-foreground">
-              JSON format parameters to override default configuration
-            </p>
-          </div>
+
         </CardContent>
       </Card>
 

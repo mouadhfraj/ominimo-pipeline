@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { MetadataFile } from "@/types/pipeline";
-import { FileJson, Upload, Download, Trash2, Search, RefreshCw } from "lucide-react";
+import { FileJson, Upload, Download, Trash2, Search, RefreshCw, AlertCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
@@ -85,8 +85,18 @@ const Metadata = () => {
     }
   };
 
-  const handleDelete = (file: MetadataFile) => {
-    toast.info("Delete functionality requires API endpoint implementation");
+  const handleDelete = async (file: MetadataFile) => {
+    if (!confirm(`Are you sure you want to deactivate "${file.name}"?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteMetadata(file.name, false);
+      toast.success("Metadata deactivated successfully");
+      fetchMetadata();
+    } catch (error) {
+      toast.error("Failed to delete metadata");
+    }
   };
 
   if (loading) {
@@ -147,12 +157,14 @@ const Metadata = () => {
                 <TableHead>Name</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Version</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredMetadata.map((file) => (
-                <TableRow key={file.path}>
+                <TableRow key={file.name}>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <FileJson className="h-4 w-4 text-primary" />
@@ -169,21 +181,36 @@ const Metadata = () => {
                       {file.version || "N/A"}
                     </span>
                   </TableCell>
+                  <TableCell>
+                    {file.is_active ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                        Inactive
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(file.updated_at).toLocaleDateString()}
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleDownload(file)}
                       >
                         <Download className="h-4 w-4" />
                       </Button>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleDelete(file)}
+                        disabled={!file.is_active}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>

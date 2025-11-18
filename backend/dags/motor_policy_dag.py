@@ -1,6 +1,7 @@
 """
-Airflow DAG for Motor Insurance Policy Pipeline
+Airflow DAG for Motor Insurance Policy Pipeline - Database Integrated
 Orchestrates daily ingestion and processing of motor policy data
+Now uses database metadata instead of file system
 """
 
 import json
@@ -10,15 +11,20 @@ from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 
 # Add the source directory to Python path
 sys.path.insert(0, '/opt/airflow/src')
 sys.path.insert(0, '/opt/airflow')
+sys.path.insert(0, '/opt/airflow/backend')
 
 # Import using absolute imports
 from src.services.pipeline import MetadataPipeline
+from src.repo import get_db_context, MetadataRepository
+
+
+# Configuration
+METADATA_NAME = "motor_policy_airflow"  # Name in database, not file path
 
 
 # Default arguments for DAG
@@ -38,10 +44,10 @@ default_args = {
 dag = DAG(
     'motor_policy_ingestion',
     default_args=default_args,
-    description='Daily motor insurance policy data ingestion and validation',
+    description='Daily motor insurance policy data ingestion and validation (Database-driven)',
     schedule_interval='0 2 * * *',  # Run daily at 2 AM
     catchup=False,
-    tags=['insurance', 'motor', 'ingestion']
+    tags=['insurance', 'motor', 'ingestion', 'database']
 )
 
 
@@ -66,40 +72,58 @@ def validate_input_files(**context):
     return len(files)
 
 
-def load_metadata(**context):
-    """Load and validate metadata configuration"""
-    metadata_path = "/opt/airflow/metadata/motor_policy_airflow.json"
+def load_metadata_from_database(**context):
+    """Load and validate metadata configuration from database"""
+    print(f"Loading metadata '{METADATA_NAME}' from database...")
 
-    with open(metadata_path, 'r') as f:
-        metadata = json.load(f)
+    with get_db_context() as db:
+        metadata_file = MetadataRepository.get_by_name(db, METADATA_NAME)
 
-    # Validate metadata structure
-    if "dataflows" not in metadata:
-        raise ValueError("Invalid metadata: missing 'dataflows'")
+        if not metadata_file:
+            raise ValueError(f"Metadata '{METADATA_NAME}' not found in database")
 
-    dataflow = metadata["dataflows"][0]
-    context['task_instance'].xcom_push(key='dataflow_name', value=dataflow.get('name'))
-    context['task_instance'].xcom_push(key='metadata_path', value=metadata_path)
+        if not metadata_file.is_active:
+            raise ValueError(f"Metadata '{METADATA_NAME}' is not active")
 
-    print(f"✓ Loaded metadata for dataflow: {dataflow.get('name')}")
-    print(f"  Version: {dataflow.get('version')}")
-    print(f"  Sources: {len(dataflow.get('sources', []))}")
-    print(f"  Transformations: {len(dataflow.get('transformations', []))}")
-    print(f"  Sinks: {len(dataflow.get('sinks', []))}")
+        metadata = metadata_file.content
 
-    return metadata_path
+        # Validate metadata structure
+        if "dataflows" not in metadata:
+            raise ValueError("Invalid metadata: missing 'dataflows'")
+
+        dataflow = metadata["dataflows"][0]
+
+        # Push to XCom
+        context['task_instance'].xcom_push(key='dataflow_name', value=dataflow.get('name'))
+        context['task_instance'].xcom_push(key='metadata_name', value=METADATA_NAME)
+        context['task_instance'].xcom_push(key='metadata_version', value=metadata_file.version)
+
+        print(f"✓ Loaded metadata from database: {METADATA_NAME}")
+        print(f"  Version: {metadata_file.version}")
+        print(f"  Description: {metadata_file.description}")
+        print(f"  Sources: {len(dataflow.get('sources', []))}")
+        print(f"  Transformations: {len(dataflow.get('transformations', []))}")
+        print(f"  Sinks: {len(dataflow.get('sinks', []))}")
+
+        return METADATA_NAME
 
 
 def run_full_pipeline(**context):
     """Execute complete pipeline - ingestion, transformation, and storage"""
-    metadata_path = context['task_instance'].xcom_pull(
+    metadata_name = context['task_instance'].xcom_pull(
         task_ids='load_metadata',
-        key='metadata_path'
+        key='metadata_name'
     )
 
-    print(f"Executing pipeline with metadata: {metadata_path}")
+    metadata_version = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_version'
+    )
 
-    pipeline = MetadataPipeline(metadata_path)
+    print(f"Executing pipeline with metadata from database: {metadata_name} v{metadata_version}")
+
+    # Create pipeline using metadata NAME (not path)
+    pipeline = MetadataPipeline(metadata_name)
 
     try:
         # Execute full pipeline
@@ -113,11 +137,6 @@ def run_full_pipeline(**context):
         # Calculate validation metrics
         valid_count = 0
         invalid_count = 0
-
-        for transform in transformation_stats.get('transformations', []):
-            if transform.get('type') == 'validate_fields':
-                # These counts are in the input_count of subsequent transformations
-                pass
 
         # Try to get actual counts from dataframes
         if 'validation_ok' in pipeline.dataframes:
@@ -133,6 +152,7 @@ def run_full_pipeline(**context):
         print(f"\n{'='*80}")
         print(f"Pipeline Execution Summary")
         print(f"{'='*80}")
+        print(f"Metadata: {metadata_name} v{metadata_version}")
         print(f"Status: {stats['status']}")
         print(f"Duration: {stats.get('duration_seconds', 0):.2f} seconds")
         print(f"Valid Records: {valid_count}")
@@ -163,6 +183,11 @@ def check_quality_metrics(**context):
         key='invalid_count'
     )
 
+    metadata_name = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_name'
+    )
+
     total_count = valid_count + invalid_count
 
     if total_count == 0:
@@ -170,14 +195,10 @@ def check_quality_metrics(**context):
 
     valid_percentage = (valid_count / total_count) * 100
 
-    # Load quality rules from metadata
-    metadata_path = context['task_instance'].xcom_pull(
-        task_ids='load_metadata',
-        key='metadata_path'
-    )
-
-    with open(metadata_path, 'r') as f:
-        metadata = json.load(f)
+    # Load quality rules from database metadata
+    with get_db_context() as db:
+        metadata_file = MetadataRepository.get_by_name(db, metadata_name)
+        metadata = metadata_file.content
 
     quality_rules = metadata['dataflows'][0].get('settings', {}).get('quality_rules', {})
     min_valid_percentage = quality_rules.get('min_valid_record_percentage', 80)
@@ -220,18 +241,30 @@ def generate_report(**context):
         task_ids='check_quality'
     )
 
+    metadata_name = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_name'
+    )
+
+    metadata_version = context['task_instance'].xcom_pull(
+        task_ids='load_metadata',
+        key='metadata_version'
+    )
+
     execution_date = context['execution_date']
     dag_run_id = context['dag_run'].run_id
 
     report = {
         "execution_date": execution_date.isoformat(),
         "dag_run_id": dag_run_id,
+        "metadata_name": metadata_name,
+        "metadata_version": metadata_version,
         "pipeline_id": pipeline_stats.get('pipeline_id', 'unknown'),
         "status": pipeline_stats.get('status'),
         "duration_seconds": pipeline_stats.get('duration_seconds'),
         "quality_metrics": quality_metrics,
         "stages": pipeline_stats.get('stages', {}),
-        "metadata_version": pipeline_stats.get('metadata_version')
+        "source": "database"
     }
 
     # Save report
@@ -270,6 +303,11 @@ Status: {status.upper()}
 Execution Date: {report['execution_date']}
 Duration: {report['duration_seconds']:.2f} seconds
 
+Metadata:
+  Name: {report['metadata_name']}
+  Version: {report['metadata_version']}
+  Source: Database
+
 Data Quality:
   Total Records: {quality['total']}
   Valid Records: {quality['valid']} ({quality['valid_percentage']:.2f}%)
@@ -277,7 +315,6 @@ Data Quality:
   Quality Check: {quality['quality_check']}
 
 Pipeline ID: {report['pipeline_id']}
-Metadata Version: {report['metadata_version']}
 """
 
     print(message)
@@ -327,7 +364,7 @@ validate_input = PythonOperator(
 
 load_metadata_task = PythonOperator(
     task_id='load_metadata',
-    python_callable=load_metadata,
+    python_callable=load_metadata_from_database,
     provide_context=True,
     dag=dag
 )

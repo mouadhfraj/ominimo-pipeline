@@ -170,7 +170,7 @@ const Dashboard = () => {
                         {run.pipeline_id}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {run.metadata_path}
+                        {run.metadata_name}
                       </p>
                     </div>
                     <StatusBadge status={run.status} />

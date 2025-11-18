@@ -2,16 +2,17 @@ export type PipelineStatus = "running" | "success" | "failed" | "pending" | "can
 
 export interface PipelineRun {
   pipeline_id: string;
-  metadata_path: string;
+  metadata_name: string;
   status: PipelineStatus;
   start_time: string;
   end_time?: string;
+  duration_seconds?: number;
+  total_records?: number;
+  valid_records?: number;
+  invalid_records?: number;
+  valid_percentage?: number;
   error_message?: string;
-  stages?: {
-    name: string;
-    status: PipelineStatus;
-    duration?: number;
-  }[];
+  stages?: Record<string, any>;
 }
 
 export interface PipelineStats {
@@ -25,18 +26,24 @@ export interface PipelineStats {
 
 export interface MetadataFile {
   name: string;
-  path: string;
-  size: number;
-  created_at: string;
   version?: string;
   description?: string;
-  dataflows?: number;
+  created_at: string;
+  updated_at: string;
+  is_active: boolean;
 }
 
 export interface HealthStatus {
   status: "healthy" | "degraded" | "unhealthy";
   active_pipelines: number;
-  uptime: number;
-  memory_usage?: number;
-  cpu_usage?: number;
+  database?: string;
+  timestamp: string;
+}
+
+export interface PipelineLog {
+  timestamp: string;
+  level: string;
+  stage?: string;
+  message: string;
+  details?: Record<string, any>;
 }
