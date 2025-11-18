@@ -27,20 +27,20 @@ class DataStorage:
             bool: True if directory is ready
         """
         try:
-            # Handle both local file:// and regular paths
+
             clean_path = path.replace("file://", "").replace("file:", "")
 
-            # Remove any trailing slashes for consistency
+
             clean_path = clean_path.rstrip('/')
 
-            # Create parent directories if they don't exist
+
             directory_path = Path(clean_path)
             directory_path.mkdir(parents=True, exist_ok=True)
 
-            # Set permissions to be world-writable (necessary for Spark temporary files)
+
             os.chmod(clean_path, 0o777)
 
-            # Verify it's writable
+
             if not os.access(clean_path, os.W_OK):
                 logger.error(f"Directory exists but is not writable: {clean_path}")
                 return False
@@ -74,39 +74,39 @@ class DataStorage:
         try:
             record_count = df.count()
 
-            # Ensure all output directories exist before writing
+
             for path in paths:
-                # Extract the base path (remove file:// prefix if present)
+
                 clean_path = path.replace("file://", "").replace("file:", "")
 
-                # For the base output directory
+
                 base_dir = Path(clean_path).parent
                 if not self._ensure_directory_exists(str(base_dir)):
                     raise IOError(f"Cannot create/access output directory: {base_dir}")
 
-                # Also ensure the target directory itself exists
+
                 if not self._ensure_directory_exists(clean_path):
                     raise IOError(f"Cannot create/access output directory: {clean_path}")
 
             for path in paths:
-                # Configure Hadoop to use local filesystem with proper permissions
+
                 hadoop_conf = df.sparkSession.sparkContext._jsc.hadoopConfiguration()
                 hadoop_conf.set("fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem")
                 hadoop_conf.set("fs.default.name", "file:///")
 
                 writer = df.write.format(format_type).mode(save_mode)
 
-                # Apply partitioning if specified
+
                 if partition_by:
                     logger.info(f"Partitioning by: {partition_by}")
                     writer = writer.partitionBy(*partition_by)
 
-                # Write data
+
                 writer.save(path)
 
                 logger.info(f"Successfully wrote {record_count} records to {path}")
 
-            # Store statistics
+
             self.write_stats[name] = {
                 "record_count": record_count,
                 "paths": paths,
@@ -209,7 +209,7 @@ class DataStorage:
         try:
             logger.info(f"Creating backup at {backup_path}")
 
-            # Ensure backup directory exists
+
             clean_path = backup_path.replace("file://", "").replace("file:", "")
             self._ensure_directory_exists(clean_path)
 

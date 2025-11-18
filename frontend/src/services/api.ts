@@ -18,6 +18,7 @@ export const api = {
       status: data.status === "healthy" ? "healthy" : "unhealthy",
       active_pipelines: data.active_pipelines,
       database: data.database,
+      airflow: data.airflow,
       timestamp: data.timestamp,
     };
   },
@@ -67,8 +68,8 @@ export const api = {
   },
 
   // Pipeline Execution
-  async runPipeline(metadataPath: string, asyncExecution: boolean = true) {
-    const response = await fetch(`${API_BASE_URL}/pipeline/run`, {
+  async runPipelineDirect(metadataPath: string, asyncExecution: boolean = true) {
+    const response = await fetch(`${API_BASE_URL}/pipeline/run/direct`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -85,14 +86,44 @@ export const api = {
     return response.json();
   },
 
-  async getPipelineStatus(pipelineId: string): Promise<PipelineRun> {
-    const response = await fetch(`${API_BASE_URL}/pipeline/status/${pipelineId}`);
-    if (!response.ok) throw new Error(`Failed to fetch pipeline status: ${pipelineId}`);
+  async runPipelineAirflow(metadataName: string) {
+    const response = await fetch(`${API_BASE_URL}/pipeline/run/airflow`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        metadata_name: metadataName,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Failed to trigger Airflow pipeline");
+    }
+
     return response.json();
   },
 
-  async listPipelineRuns(limit: number = 10): Promise<PipelineRun[]> {
-    const response = await fetch(`${API_BASE_URL}/pipeline/runs?limit=${limit}`);
+  // Legacy endpoint
+  async runPipeline(metadataPath: string, asyncExecution: boolean = true) {
+    return this.runPipelineDirect(metadataPath, asyncExecution);
+  },
+
+  async getPipelineStatus(pipelineId: string): Promise<PipelineRun> {
+    const response = await fetch(`${API_BASE_URL}/pipeline/status/${pipelineId}`);
+    if (!response.ok) throw new Error(`Failed to fetch pipeline status: ${pipelineId}`);
+    const data = await response.json();
+    return {
+      ...data,
+      execution_method: data.execution_method || (pipelineId.startsWith("airflow_") ? "airflow" : "direct"),
+    };
+  },
+
+  async listPipelineRuns(limit: number = 10, executionMethod?: string): Promise<PipelineRun[]> {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (executionMethod) {
+      params.append("execution_method", executionMethod);
+    }
+    const response = await fetch(`${API_BASE_URL}/pipeline/runs?${params}`);
     if (!response.ok) throw new Error("Failed to fetch pipeline runs");
     const data = await response.json();
     return data.runs;
@@ -119,10 +150,29 @@ export const api = {
     return data.logs;
   },
 
+  // Airflow
+  async listAirflowDAGs() {
+    const response = await fetch(`${API_BASE_URL}/airflow/dags`);
+    if (!response.ok) throw new Error("Failed to fetch Airflow DAGs");
+    return response.json();
+  },
+
+  async getPipelineStages(pipelineId: string) {
+    const response = await fetch(`${API_BASE_URL}/pipeline/${pipelineId}/stages`);
+    if (!response.ok) throw new Error(`Failed to fetch pipeline stages: ${pipelineId}`);
+    return response.json();
+  },
+
   // Statistics
   async getStats(): Promise<PipelineStats> {
     const response = await fetch(`${API_BASE_URL}/stats`);
     if (!response.ok) throw new Error("Failed to fetch statistics");
+    return response.json();
+  },
+
+  async getMetadataStats(metadataName: string) {
+    const response = await fetch(`${API_BASE_URL}/stats/metadata/${metadataName}`);
+    if (!response.ok) throw new Error(`Failed to fetch metadata stats: ${metadataName}`);
     return response.json();
   },
 };

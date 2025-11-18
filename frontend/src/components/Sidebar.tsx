@@ -15,7 +15,7 @@ const navigation = [
   { name: "Metadata", href: "/metadata", icon: FileJson },
   { name: "Execute Pipeline", href: "/execute", icon: Activity },
   { name: "Logs", href: "/logs", icon: FileText },
-  { name: "Health", href: "/health", icon: Shield },
+  
 ];
 
 export function Sidebar() {

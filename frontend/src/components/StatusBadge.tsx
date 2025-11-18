@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, XCircle, Clock, Loader2, AlertCircle } from "lucide-react";
 
-export type PipelineStatus = "running" | "success" | "failed" | "pending" | "cancelled";
+export type PipelineStatus = "running" | "success" | "failed" | "pending" | "cancelled" | "queued" | "queued_airflow";
 
 interface StatusBadgeProps {
   status: PipelineStatus;
@@ -38,6 +38,18 @@ const statusConfig = {
     label: "Cancelled",
     icon: AlertCircle,
     variant: "secondary" as const,
+    iconClass: "",
+  },
+  queued: {
+    label: "Queued",
+    icon: Clock,
+    variant: "default" as const,
+    iconClass: "",
+  },
+  queued_airflow: {
+    label: "Queued (Airflow)",
+    icon: Clock,
+    variant: "default" as const,
     iconClass: "",
   },
 };

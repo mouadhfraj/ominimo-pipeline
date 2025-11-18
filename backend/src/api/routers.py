@@ -1,19 +1,21 @@
 """
-Routers Module - Database-First Implementation
-All metadata operations now use PostgreSQL database
+Routers Module - Enhanced with Airflow Integration
+Supports both direct execution and Airflow-scheduled execution
+All runs and logs saved to database for both methods
 """
 
 import json
 import sys
+import requests
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 from loguru import logger
 
-from .serializers import PipelineRunRequest
+from .serializers import PipelineRunRequest, AirflowTriggerRequest
 
 sys.path.insert(0, '/app/backend')
 from ..repo import (
@@ -27,23 +29,19 @@ from ..services.pipeline import MetadataPipeline
 
 router = APIRouter()
 
-# In-memory storage for active pipelines only
+# Configuration
+AIRFLOW_BASE_URL = "http://ominimo-airflow-webserver:8080/api/v1"
+AIRFLOW_USERNAME = "admin"
+AIRFLOW_PASSWORD = "admin"
+
+
 active_pipelines: Dict[str, MetadataPipeline] = {}
 
 
-# --------------------------------------------------------------------
-# Helper Functions
-# --------------------------------------------------------------------
 
 def serialize_for_json(obj: Any) -> Any:
     """
     Recursively convert datetime objects to ISO format strings for JSON serialization
-
-    Args:
-        obj: Object to serialize (can be dict, list, datetime, or primitive)
-
-    Returns:
-        JSON-serializable version of the object
     """
     if isinstance(obj, datetime):
         return obj.isoformat()
@@ -55,16 +53,20 @@ def serialize_for_json(obj: Any) -> Any:
         return obj
 
 
-# --------------------------------------------------------------------
-# Root & Health
-# --------------------------------------------------------------------
+def get_airflow_auth():
+    """Get Airflow authentication tuple"""
+    return (AIRFLOW_USERNAME, AIRFLOW_PASSWORD)
+
+
+
 
 @router.get("/")
 async def root():
     return {
         "service": "Ominimo Motor Insurance Pipeline",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "running",
+        "features": ["direct_execution", "airflow_scheduling"],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -72,23 +74,32 @@ async def root():
 @router.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     try:
-        # Test database connection
         db.execute("SELECT 1")
         db_status = "healthy"
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
 
+
+    try:
+        response = requests.get(
+            f"{AIRFLOW_BASE_URL}/health",
+            auth=get_airflow_auth(),
+            timeout=5
+        )
+        airflow_status = "healthy" if response.status_code == 200 else f"unhealthy: {response.status_code}"
+    except Exception as e:
+        airflow_status = f"unhealthy: {str(e)}"
+
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "active_pipelines": len(active_pipelines),
-        "database": db_status
+        "database": db_status,
+        "airflow": airflow_status
     }
 
 
-# --------------------------------------------------------------------
-# Metadata Endpoints - DATABASE FIRST
-# --------------------------------------------------------------------
+
 
 @router.get("/metadata")
 async def list_metadata(active_only: bool = True, db: Session = Depends(get_db)):
@@ -143,7 +154,6 @@ async def upload_metadata(file: UploadFile = File(...), db: Session = Depends(ge
         content = await file.read()
         metadata_json = json.loads(content)
 
-        # Validate structure
         if "dataflows" not in metadata_json:
             raise HTTPException(400, "Invalid metadata: missing 'dataflows'")
 
@@ -152,18 +162,15 @@ async def upload_metadata(file: UploadFile = File(...), db: Session = Depends(ge
         version = dataflow.get("version", "1.0.0")
         description = dataflow.get("description", "")
 
-        # Check if metadata already exists
         existing = MetadataRepository.get_by_name(db, name)
 
         if existing:
-            # Update existing
             metadata = MetadataRepository.update(
                 db, name, version=version, content=metadata_json, description=description
             )
             message = "Metadata updated successfully"
             logger.info(f"Updated metadata: {name} v{version}")
         else:
-            # Create new
             metadata = MetadataRepository.create(
                 db, name, version, metadata_json, description
             )
@@ -185,31 +192,9 @@ async def upload_metadata(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(500, f"Upload error: {e}")
 
 
-@router.put("/metadata/{metadata_name}")
-async def update_metadata(
-    metadata_name: str,
-    version: str = None,
-    description: str = None,
-    content: Dict = None,
-    db: Session = Depends(get_db)
-):
-    """Update existing metadata"""
-    metadata = MetadataRepository.update(db, metadata_name, version, content, description)
-
-    if not metadata:
-        raise HTTPException(404, f"Metadata '{metadata_name}' not found")
-
-    return {
-        "message": "Metadata updated successfully",
-        "name": metadata.name,
-        "version": metadata.version,
-        "updated_at": metadata.updated_at.isoformat()
-    }
-
-
 @router.delete("/metadata/{metadata_name}")
 async def delete_metadata(metadata_name: str, hard_delete: bool = False, db: Session = Depends(get_db)):
-    """Delete metadata file (soft delete by default)"""
+    """Delete metadata file"""
     success = MetadataRepository.delete(db, metadata_name, soft=not hard_delete)
 
     if not success:
@@ -220,35 +205,32 @@ async def delete_metadata(metadata_name: str, hard_delete: bool = False, db: Ses
     return {"message": f"Metadata '{metadata_name}' {delete_type} successfully"}
 
 
-# --------------------------------------------------------------------
-# Pipeline Execution - DATABASE INTEGRATED
-# --------------------------------------------------------------------
 
-def run_pipeline_background(pipeline_id: str, metadata_name: str, db_session_maker):
+
+
+
+def run_pipeline_background(pipeline_id: str, metadata_name: str, execution_method: str = "direct"):
     """Runs pipeline in background thread with database logging"""
-
-    # Create new database session for background task
     from ..repo.database import SessionLocal
     db = SessionLocal()
 
     try:
-        logger.info(f"Pipeline starting [{pipeline_id}] with metadata '{metadata_name}'")
+        logger.info(f"Pipeline starting [{pipeline_id}] with metadata '{metadata_name}' via {execution_method}")
 
-        # Update status to running
         PipelineRunRepository.update_status(db, pipeline_id, "running")
 
-        # Create log entry
         PipelineLogRepository.create(
-            db, pipeline_id, "INFO", f"Pipeline {pipeline_id} started with metadata: {metadata_name}", stage="initialization"
+            db, pipeline_id, "INFO",
+            f"Pipeline {pipeline_id} started with metadata: {metadata_name} (method: {execution_method})",
+            stage="initialization"
         )
 
-        # Execute pipeline - now using metadata NAME, not path
         pipeline = MetadataPipeline(metadata_name)
         active_pipelines[pipeline_id] = pipeline
 
         stats = pipeline.execute()
 
-        # Extract metrics
+
         valid_count = 0
         invalid_count = 0
 
@@ -259,25 +241,33 @@ def run_pipeline_background(pipeline_id: str, metadata_name: str, db_session_mak
 
         total_count = valid_count + invalid_count
 
-        # CRITICAL FIX: Serialize stages dict to convert datetime objects to ISO strings
+
         serialized_stages = serialize_for_json(stats.get("stages", {}))
 
-        # Update run with metrics
+
         PipelineRunRepository.update_metrics(
             db,
             pipeline_id,
             total_records=total_count,
             valid_records=valid_count,
             invalid_records=invalid_count,
-            stages=serialized_stages  # Use serialized version
+            stages=serialized_stages
         )
 
-        # Update status to success
+
         PipelineRunRepository.update_status(
             db, pipeline_id, "success", end_time=datetime.utcnow()
         )
 
-        # Log success
+
+        for stage_name, stage_data in stats.get("stages", {}).items():
+            PipelineLogRepository.create(
+                db, pipeline_id, "INFO",
+                f"Stage {stage_name} completed with status: {stage_data.get('status', 'unknown')}",
+                stage=stage_name,
+                details=serialize_for_json(stage_data)
+            )
+
         PipelineLogRepository.create(
             db, pipeline_id, "INFO",
             f"Pipeline completed successfully. Valid: {valid_count}, Invalid: {invalid_count}",
@@ -289,7 +279,6 @@ def run_pipeline_background(pipeline_id: str, metadata_name: str, db_session_mak
     except Exception as e:
         logger.error(f"Pipeline error [{pipeline_id}]: {e}")
 
-        # Update status to failed
         try:
             PipelineRunRepository.update_status(
                 db, pipeline_id, "failed",
@@ -297,7 +286,6 @@ def run_pipeline_background(pipeline_id: str, metadata_name: str, db_session_mak
                 error_message=str(e)
             )
 
-            # Log error
             PipelineLogRepository.create(
                 db, pipeline_id, "ERROR",
                 f"Pipeline failed: {str(e)}",
@@ -315,18 +303,15 @@ def run_pipeline_background(pipeline_id: str, metadata_name: str, db_session_mak
         db.close()
 
 
-@router.post("/pipeline/run")
-async def run_pipeline(
+@router.post("/pipeline/run/direct")
+async def run_pipeline_direct(
     request: PipelineRunRequest,
     background: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Execute pipeline with database tracking - using metadata name"""
-
-    # Extract metadata name from request
+    """Execute pipeline directly (not through Airflow)"""
     metadata_name = request.metadata_path
 
-    # Check if metadata exists in database
     metadata = MetadataRepository.get_by_name(db, metadata_name)
 
     if not metadata:
@@ -335,10 +320,8 @@ async def run_pipeline(
     if not metadata.is_active:
         raise HTTPException(400, f"Metadata '{metadata_name}' is not active")
 
-    # Generate pipeline ID
-    pipeline_id = f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    pipeline_id = f"direct_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
-    # Create pipeline run record
     PipelineRunRepository.create(
         db,
         pipeline_id=pipeline_id,
@@ -346,42 +329,40 @@ async def run_pipeline(
         status="queued"
     )
 
-    # Log pipeline creation
     PipelineLogRepository.create(
         db, pipeline_id, "INFO",
-        f"Pipeline queued with metadata: {metadata_name} v{metadata.version}",
+        f"Pipeline queued with metadata: {metadata_name} v{metadata.version} (direct execution)",
         stage="initialization",
-        details={"metadata_version": metadata.version}
+        details={"metadata_version": metadata.version, "execution_method": "direct"}
     )
 
     if request.async_execution:
-        # Run in background
-        from ..repo.database import SessionLocal
         background.add_task(
             run_pipeline_background,
             pipeline_id,
             metadata_name,
-            SessionLocal
+            "direct"
         )
 
         return {
-            "message": "Pipeline started",
+            "message": "Pipeline started (direct execution)",
             "pipeline_id": pipeline_id,
             "metadata_name": metadata_name,
             "metadata_version": metadata.version,
+            "execution_method": "direct",
             "status": "queued",
             "check_status_url": f"/pipeline/status/{pipeline_id}"
         }
 
-    # Synchronous execution
-    run_pipeline_background(pipeline_id, metadata_name, None)
 
-    # Get updated run info
+    run_pipeline_background(pipeline_id, metadata_name, "direct")
+
     run = PipelineRunRepository.get_by_id(db, pipeline_id)
 
     return {
         "pipeline_id": run.pipeline_id,
         "metadata_name": run.metadata_name,
+        "execution_method": "direct",
         "status": run.status,
         "start_time": run.start_time.isoformat(),
         "end_time": run.end_time.isoformat() if run.end_time else None,
@@ -389,21 +370,214 @@ async def run_pipeline(
         "total_records": run.total_records,
         "valid_records": run.valid_records,
         "invalid_records": run.invalid_records,
-        "valid_percentage": run.valid_percentage
+        "valid_percentage": run.valid_percentage,
+        "stages": run.stages
     }
+
+
+
+# Airflow Pipeline Execution
+
+
+@router.post("/pipeline/run/airflow")
+async def run_pipeline_airflow(
+    request: AirflowTriggerRequest,
+    db: Session = Depends(get_db)
+):
+    """Trigger pipeline execution through Airflow"""
+    metadata_name = request.metadata_name
+
+    metadata = MetadataRepository.get_by_name(db, metadata_name)
+
+    if not metadata:
+        raise HTTPException(404, f"Metadata '{metadata_name}' not found in database")
+
+    if not metadata.is_active:
+        raise HTTPException(400, f"Metadata '{metadata_name}' is not active")
+
+
+    pipeline_id = f"airflow_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+
+
+    PipelineRunRepository.create(
+        db,
+        pipeline_id=pipeline_id,
+        metadata_name=metadata_name,
+        status="queued_airflow"
+    )
+
+    PipelineLogRepository.create(
+        db, pipeline_id, "INFO",
+        f"Pipeline queued with metadata: {metadata_name} v{metadata.version} (Airflow execution)",
+        stage="initialization",
+        details={"metadata_version": metadata.version, "execution_method": "airflow"}
+    )
+
+
+    dag_id = "motor_policy_ingestion"
+
+    try:
+
+        conf = {
+            "pipeline_id": pipeline_id,
+            "metadata_name": metadata_name
+        }
+
+        response = requests.post(
+            f"{AIRFLOW_BASE_URL}/dags/{dag_id}/dagRuns",
+            auth=get_airflow_auth(),
+            json={
+                "conf": conf,
+                "dag_run_id": pipeline_id
+            },
+            headers={"Content-Type": "application/json"}
+        )
+
+        if response.status_code not in [200, 201]:
+            error_msg = f"Failed to trigger Airflow DAG: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+
+            PipelineRunRepository.update_status(
+                db, pipeline_id, "failed",
+                end_time=datetime.utcnow(),
+                error_message=error_msg
+            )
+
+            raise HTTPException(500, error_msg)
+
+        airflow_response = response.json()
+
+        PipelineLogRepository.create(
+            db, pipeline_id, "INFO",
+            f"Airflow DAG triggered successfully: {dag_id}",
+            stage="airflow_trigger",
+            details={"dag_id": dag_id, "dag_run_id": pipeline_id}
+        )
+
+        return {
+            "message": "Pipeline triggered via Airflow",
+            "pipeline_id": pipeline_id,
+            "metadata_name": metadata_name,
+            "metadata_version": metadata.version,
+            "execution_method": "airflow",
+            "dag_id": dag_id,
+            "dag_run_id": airflow_response.get("dag_run_id"),
+            "status": "queued_airflow",
+            "airflow_url": f"{AIRFLOW_BASE_URL.replace('/api/v1', '')}/dags/{dag_id}/grid",
+            "check_status_url": f"/pipeline/status/{pipeline_id}"
+        }
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Failed to connect to Airflow: {str(e)}"
+        logger.error(error_msg)
+
+        PipelineRunRepository.update_status(
+            db, pipeline_id, "failed",
+            end_time=datetime.utcnow(),
+            error_message=error_msg
+        )
+
+        raise HTTPException(503, "Airflow service unavailable")
+
+
+@router.get("/airflow/dags")
+async def list_airflow_dags():
+    """List available Airflow DAGs"""
+    try:
+        response = requests.get(
+            f"{AIRFLOW_BASE_URL}/dags",
+            auth=get_airflow_auth(),
+            params={"limit": 100}
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(500, f"Failed to fetch DAGs: {response.status_code}")
+
+        dags_data = response.json()
+
+        return {
+            "total_dags": dags_data.get("total_entries", 0),
+            "dags": [
+                {
+                    "dag_id": dag["dag_id"],
+                    "is_paused": dag["is_paused"],
+                    "is_active": dag["is_active"],
+                    "description": dag.get("description", ""),
+                    "tags": dag.get("tags", [])
+                }
+                for dag in dags_data.get("dags", [])
+            ]
+        }
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(503, f"Airflow service unavailable: {str(e)}")
+
+
+@router.get("/airflow/dag/{dag_id}/runs")
+async def get_airflow_dag_runs(dag_id: str, limit: int = 10):
+    """Get DAG runs from Airflow"""
+    try:
+        response = requests.get(
+            f"{AIRFLOW_BASE_URL}/dags/{dag_id}/dagRuns",
+            auth=get_airflow_auth(),
+            params={"limit": limit, "order_by": "-execution_date"}
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(500, f"Failed to fetch DAG runs: {response.status_code}")
+
+        runs_data = response.json()
+
+        return {
+            "dag_id": dag_id,
+            "total_runs": runs_data.get("total_entries", 0),
+            "runs": [
+                {
+                    "dag_run_id": run["dag_run_id"],
+                    "state": run["state"],
+                    "execution_date": run["execution_date"],
+                    "start_date": run.get("start_date"),
+                    "end_date": run.get("end_date"),
+                    "conf": run.get("conf", {})
+                }
+                for run in runs_data.get("dag_runs", [])
+            ]
+        }
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(503, f"Airflow service unavailable: {str(e)}")
+
+
+
+
+@router.post("/pipeline/run")
+async def run_pipeline_legacy(
+    request: PipelineRunRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Legacy endpoint - defaults to direct execution"""
+    return await run_pipeline_direct(request, background, db)
+
+
 
 
 @router.get("/pipeline/status/{pipeline_id}")
 async def pipeline_status(pipeline_id: str, db: Session = Depends(get_db)):
-    """Get pipeline run status from database"""
+    """Get pipeline run status from database with stage details"""
     run = PipelineRunRepository.get_by_id(db, pipeline_id)
 
     if not run:
         raise HTTPException(404, f"Pipeline not found: {pipeline_id}")
 
+
+    logs = PipelineLogRepository.get_by_pipeline(db, pipeline_id, limit=100)
+
+
+    execution_method = "airflow" if pipeline_id.startswith("airflow_") else "direct"
+
     return {
         "pipeline_id": run.pipeline_id,
         "metadata_name": run.metadata_name,
+        "execution_method": execution_method,
         "status": run.status,
         "start_time": run.start_time.isoformat(),
         "end_time": run.end_time.isoformat() if run.end_time else None,
@@ -413,7 +587,8 @@ async def pipeline_status(pipeline_id: str, db: Session = Depends(get_db)):
         "invalid_records": run.invalid_records,
         "valid_percentage": run.valid_percentage,
         "stages": run.stages,
-        "error_message": run.error_message
+        "error_message": run.error_message,
+        "log_count": len(logs)
     }
 
 
@@ -422,12 +597,20 @@ async def list_pipeline_runs(
     limit: int = 10,
     status: str = None,
     metadata_name: str = None,
+    execution_method: str = None,
     db: Session = Depends(get_db)
 ):
-    """List pipeline runs from database"""
+    """List pipeline runs from database with execution method filter"""
     runs = PipelineRunRepository.get_all(
         db, status=status, metadata_name=metadata_name, limit=limit
     )
+
+
+    if execution_method:
+        if execution_method == "airflow":
+            runs = [r for r in runs if r.pipeline_id.startswith("airflow_")]
+        elif execution_method == "direct":
+            runs = [r for r in runs if r.pipeline_id.startswith("direct_")]
 
     return {
         "total": len(runs),
@@ -435,6 +618,7 @@ async def list_pipeline_runs(
             {
                 "pipeline_id": r.pipeline_id,
                 "metadata_name": r.metadata_name,
+                "execution_method": "airflow" if r.pipeline_id.startswith("airflow_") else "direct",
                 "status": r.status,
                 "start_time": r.start_time.isoformat(),
                 "end_time": r.end_time.isoformat() if r.end_time else None,
@@ -449,6 +633,54 @@ async def list_pipeline_runs(
     }
 
 
+@router.get("/pipeline/{pipeline_id}/stages")
+async def get_pipeline_stages(pipeline_id: str, db: Session = Depends(get_db)):
+    """Get detailed stage information for a pipeline run"""
+    run = PipelineRunRepository.get_by_id(db, pipeline_id)
+
+    if not run:
+        raise HTTPException(404, f"Pipeline not found: {pipeline_id}")
+
+    if not run.stages:
+        return {
+            "pipeline_id": pipeline_id,
+            "message": "No stage information available yet",
+            "stages": []
+        }
+
+
+    logs = PipelineLogRepository.get_by_pipeline(db, pipeline_id, limit=1000)
+
+    stage_logs = {}
+    for log in logs:
+        if log.stage:
+            if log.stage not in stage_logs:
+                stage_logs[log.stage] = []
+            stage_logs[log.stage].append({
+                "timestamp": log.timestamp.isoformat(),
+                "level": log.level,
+                "message": log.message
+            })
+
+
+    stages_detail = []
+    for stage_name, stage_data in run.stages.items():
+        stages_detail.append({
+            "name": stage_name,
+            "status": stage_data.get("status", "unknown"),
+            "start_time": stage_data.get("start_time"),
+            "end_time": stage_data.get("end_time"),
+            "data": stage_data,
+            "logs": stage_logs.get(stage_name, [])
+        })
+
+    return {
+        "pipeline_id": pipeline_id,
+        "total_stages": len(stages_detail),
+        "stages": stages_detail
+    }
+
+
 @router.delete("/pipeline/{pipeline_id}")
 async def cancel_pipeline(pipeline_id: str, db: Session = Depends(get_db)):
     """Cancel running pipeline"""
@@ -459,7 +691,6 @@ async def cancel_pipeline(pipeline_id: str, db: Session = Depends(get_db)):
         active_pipelines[pipeline_id].stop()
         del active_pipelines[pipeline_id]
 
-        # Update database
         PipelineRunRepository.update_status(
             db, pipeline_id, "cancelled", end_time=datetime.utcnow()
         )
@@ -477,19 +708,23 @@ async def cancel_pipeline(pipeline_id: str, db: Session = Depends(get_db)):
         raise HTTPException(500, f"Error cancelling pipeline: {e}")
 
 
-# --------------------------------------------------------------------
-# Logs
-# --------------------------------------------------------------------
+
+
 
 @router.get("/logs/{pipeline_id}")
 async def get_logs(
     pipeline_id: str,
     level: str = None,
+    stage: str = None,
     limit: int = 1000,
     db: Session = Depends(get_db)
 ):
-    """Get pipeline logs from database"""
+    """Get pipeline logs from database with optional stage filter"""
     logs = PipelineLogRepository.get_by_pipeline(db, pipeline_id, level=level, limit=limit)
+
+
+    if stage:
+        logs = [log for log in logs if log.stage == stage]
 
     if not logs:
         raise HTTPException(404, f"No logs found for pipeline {pipeline_id}")
@@ -531,16 +766,30 @@ async def get_recent_errors(limit: int = 100, db: Session = Depends(get_db)):
     }
 
 
-# --------------------------------------------------------------------
-# Stats
-# --------------------------------------------------------------------
 
 @router.get("/stats")
 async def statistics(db: Session = Depends(get_db)):
     """Get pipeline statistics from database"""
     stats = PipelineRunRepository.get_statistics(db)
 
-    # Add metadata count
+
+    all_runs = PipelineRunRepository.get_all(db, limit=10000)
+    direct_runs = [r for r in all_runs if r.pipeline_id.startswith("direct_")]
+    airflow_runs = [r for r in all_runs if r.pipeline_id.startswith("airflow_")]
+
+    stats["execution_methods"] = {
+        "direct": {
+            "total": len(direct_runs),
+            "successful": sum(1 for r in direct_runs if r.status == "success"),
+            "failed": sum(1 for r in direct_runs if r.status == "failed")
+        },
+        "airflow": {
+            "total": len(airflow_runs),
+            "successful": sum(1 for r in airflow_runs if r.status == "success"),
+            "failed": sum(1 for r in airflow_runs if r.status == "failed")
+        }
+    }
+
     metadata_count = len(MetadataRepository.get_all(db, active_only=True))
     stats["active_metadata_files"] = metadata_count
 
@@ -550,20 +799,20 @@ async def statistics(db: Session = Depends(get_db)):
 @router.get("/stats/metadata/{metadata_name}")
 async def metadata_statistics(metadata_name: str, db: Session = Depends(get_db)):
     """Get statistics for specific metadata"""
-
-    # Check if metadata exists
     metadata = MetadataRepository.get_by_name(db, metadata_name)
     if not metadata:
         raise HTTPException(404, f"Metadata '{metadata_name}' not found")
 
-    # Get all runs for this metadata
     runs = PipelineRunRepository.get_all(db, metadata_name=metadata_name, limit=1000)
 
     total = len(runs)
     success = sum(1 for r in runs if r.status == "success")
     failed = sum(1 for r in runs if r.status == "failed")
 
-    # Calculate average metrics
+
+    direct_runs = [r for r in runs if r.pipeline_id.startswith("direct_")]
+    airflow_runs = [r for r in runs if r.pipeline_id.startswith("airflow_")]
+
     valid_records_sum = sum(r.valid_records or 0 for r in runs if r.valid_records)
     invalid_records_sum = sum(r.invalid_records or 0 for r in runs if r.invalid_records)
     duration_sum = sum(r.duration_seconds or 0 for r in runs if r.duration_seconds)
@@ -575,6 +824,10 @@ async def metadata_statistics(metadata_name: str, db: Session = Depends(get_db))
         "successful_runs": success,
         "failed_runs": failed,
         "success_rate": (success / total * 100) if total > 0 else 0,
+        "execution_methods": {
+            "direct": len(direct_runs),
+            "airflow": len(airflow_runs)
+        },
         "total_valid_records": valid_records_sum,
         "total_invalid_records": invalid_records_sum,
         "average_duration_seconds": (duration_sum / total) if total > 0 else 0,

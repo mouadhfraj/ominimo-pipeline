@@ -109,6 +109,37 @@ const Dashboard = () => {
         />
       </div>
 
+      {stats.execution_methods && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Execution Methods</CardTitle>
+            <CardDescription>Pipeline runs by execution method</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Direct Execution</span>
+                  <span className="text-2xl font-bold">{stats.execution_methods.direct.total}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Success: {stats.execution_methods.direct.successful} | Failed: {stats.execution_methods.direct.failed}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Airflow Execution</span>
+                  <span className="text-2xl font-bold">{stats.execution_methods.airflow.total}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Success: {stats.execution_methods.airflow.successful} | Failed: {stats.execution_methods.airflow.failed}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>

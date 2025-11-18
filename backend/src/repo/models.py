@@ -24,7 +24,7 @@ class MetadataFile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True, index=True)
 
-    # Relationship
+
     pipeline_runs = relationship("PipelineRun", back_populates="metadata_file", cascade="all, delete-orphan")
 
 
@@ -45,7 +45,7 @@ class PipelineRun(Base):
     stages = Column(JSONB)
     error_message = Column(Text)
 
-    # Relationships
+
     metadata_file = relationship("MetadataFile", back_populates="pipeline_runs")
     logs = relationship("PipelineLog", back_populates="pipeline_run", cascade="all, delete-orphan")
 
@@ -61,10 +61,10 @@ class PipelineLog(Base):
     message = Column(Text, nullable=False)
     details = Column(JSONB)
 
-    # Relationships
+
     pipeline_run = relationship("PipelineRun", back_populates="logs")
 
-    # Constraints
+
     __table_args__ = (
         CheckConstraint(
             "level IN ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')",

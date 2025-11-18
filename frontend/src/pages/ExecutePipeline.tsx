@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { PlayCircle, FileJson, Settings, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import { MetadataFile } from "@/types/pipeline";
 const ExecutePipeline = () => {
   const navigate = useNavigate();
   const [selectedMetadata, setSelectedMetadata] = useState("");
+  const [executionMethod, setExecutionMethod] = useState<"direct" | "airflow">("direct");
   const [asyncExecution, setAsyncExecution] = useState(true);
   const [parameters, setParameters] = useState("");
   const [metadataFiles, setMetadataFiles] = useState<MetadataFile[]>([]);
@@ -50,17 +52,20 @@ const ExecutePipeline = () => {
 
     try {
       setExecuting(true);
-      const result = await api.runPipeline(selectedMetadata, asyncExecution);
-      
-      toast.success(
-        asyncExecution 
-          ? `Pipeline queued: ${result.pipeline_id}` 
-          : "Pipeline completed successfully"
-      );
 
-      setTimeout(() => {
+      let result;
+      if (executionMethod === "airflow") {
+        result = await api.runPipelineAirflow(selectedMetadata);
+        toast.success("Pipeline triggered via Airflow successfully");
+      } else {
+        result = await api.runPipelineDirect(selectedMetadata, asyncExecution);
+        toast.success("Pipeline execution started successfully");
+      }
+
+      // Navigate to logs page for this pipeline
+      if (result.pipeline_id) {
         navigate(`/logs?id=${result.pipeline_id}`);
-      }, 1000);
+      }
     } catch (error: any) {
       toast.error(error.message || "Failed to execute pipeline");
     } finally {
@@ -107,7 +112,25 @@ const ExecutePipeline = () => {
             </p>
           </div>
 
+          <div className="space-y-3">
+            <Label>Execution Method</Label>
+            <RadioGroup value={executionMethod} onValueChange={(value: "direct" | "airflow") => setExecutionMethod(value)}>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="direct" id="direct" />
+                <Label htmlFor="direct" className="font-normal cursor-pointer">
+                  Direct Execution (immediate, runs in backend)
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="airflow" id="airflow" />
+                <Label htmlFor="airflow" className="font-normal cursor-pointer">
+                  Airflow Execution (scheduled via Airflow DAG)
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
 
+          
         </CardContent>
       </Card>
 
@@ -122,19 +145,21 @@ const ExecutePipeline = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="async-mode">Asynchronous Execution</Label>
-              <p className="text-xs text-muted-foreground">
-                Run pipeline in background and return immediately
-              </p>
+          {executionMethod === "direct" && (
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="async-mode">Asynchronous Execution</Label>
+                <p className="text-xs text-muted-foreground">
+                  Run pipeline in background and return immediately
+                </p>
+              </div>
+              <Switch
+                id="async-mode"
+                checked={asyncExecution}
+                onCheckedChange={setAsyncExecution}
+              />
             </div>
-            <Switch
-              id="async-mode"
-              checked={asyncExecution}
-              onCheckedChange={setAsyncExecution}
-            />
-          </div>
+          )}
 
           <div className="pt-4 border-t border-border">
             <Button 

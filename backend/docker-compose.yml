@@ -52,7 +52,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./backend/repo/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./src/repo/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "ominimo"]
       interval: 10s
@@ -170,6 +170,7 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
       - AIRFLOW__WEBSERVER__SECRET_KEY=ominimo_secret_key_2025
+      - AIRFLOW__API__AUTH_BACKEND=airflow.api.auth.backend.basic_auth
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src

@@ -18,7 +18,7 @@ from .validation import DataValidator
 from .transformation import DataTransformer
 from .storage import DataStorage
 
-# Import database components
+
 sys.path.insert(0, '/app/backend')
 from ..repo import get_db_context, MetadataRepository
 
@@ -41,13 +41,12 @@ class MetadataPipeline:
         self.metadata = self._load_metadata_from_db()
         self.spark = spark or self._create_spark_session()
 
-        # Initialize components
+
         self.ingestion = DataIngestion(self.spark)
         self.validator = DataValidator(self.spark)
         self.transformer = DataTransformer(self.spark)
         self.storage = DataStorage()
 
-        # Pipeline state - stores all intermediate dataframes
         self.dataframes: Dict[str, DataFrame] = {}
         self.execution_stats = {
             "start_time": None,
@@ -72,10 +71,10 @@ class MetadataPipeline:
                 if not metadata_file.is_active:
                     raise ValueError(f"Metadata '{self.metadata_name}' is not active")
 
-                # Get the JSONB content
+
                 metadata = metadata_file.content
 
-                # Validate metadata structure
+
                 if "dataflows" not in metadata:
                     raise ValueError("Invalid metadata: missing 'dataflows' key")
 
@@ -103,7 +102,7 @@ class MetadataPipeline:
 
         builder = SparkSession.builder.appName(app_name).master(master)
 
-        # Apply all configs from metadata
+
         for key, value in configs.items():
             builder = builder.config(key, value)
 
@@ -185,7 +184,7 @@ class MetadataPipeline:
 
             logger.info(f"Processing {len(transformations)} transformation(s)")
 
-            # Execute each transformation
+
             for idx, transform in enumerate(transformations, 1):
                 transform_name = transform.get("name", f"transform_{idx}")
                 transform_type = transform["type"]
@@ -194,31 +193,31 @@ class MetadataPipeline:
 
                 logger.info(f"[{idx}/{len(transformations)}] Executing: {transform_name} (type: {transform_type})")
 
-                # Get input dataframe
+
                 if input_name not in self.dataframes:
                     raise ValueError(f"Input dataframe '{input_name}' not found. Available: {list(self.dataframes.keys())}")
 
                 input_df = self.dataframes[input_name]
                 input_count = input_df.count()
 
-                # Route to appropriate handler based on type
+
                 if transform_type == "validate_fields":
                     output_dfs = self._execute_validation(transform_name, input_df, params)
-                    # Validation produces multiple outputs
+
                     for output_name, output_df in output_dfs.items():
                         self.dataframes[output_name] = output_df
 
                 else:
-                    # All other transformations
+
                     output_df = self.transformer.apply_transformations(input_df, transform)
                     output_count = output_df.count()
 
-                    # Store output - use transform name as key
+
                     self.dataframes[transform_name] = output_df
 
                     logger.info(f"  → Output: {output_count} records")
 
-                # Track transformation stats
+
                 self.execution_stats["stages"]["transformation"]["transformations"].append({
                     "name": transform_name,
                     "type": transform_type,
@@ -249,7 +248,7 @@ class MetadataPipeline:
         """
         valid_df, invalid_df = self.validator.validate_dataframe(input_df, params)
 
-        # Determine output names from metadata or use defaults
+
         valid_output = params.get("valid_output", "validation_ok")
         invalid_output = params.get("invalid_output", "validation_ko")
 
@@ -284,23 +283,23 @@ class MetadataPipeline:
 
             logger.info(f"Processing {len(sinks)} sink(s)")
 
-            # Write to each sink
+
             for idx, sink in enumerate(sinks, 1):
                 sink_name = sink.get("name", f"sink_{idx}")
                 input_name = sink.get("input")
 
                 logger.info(f"[{idx}/{len(sinks)}] Writing to sink: {sink_name}")
 
-                # Get input dataframe
+
                 if input_name not in self.dataframes:
                     raise ValueError(f"Input dataframe '{input_name}' not found for sink '{sink_name}'. Available: {list(self.dataframes.keys())}")
 
                 input_df = self.dataframes[input_name]
 
-                # Write to sink
+
                 success = self.storage.write_to_sink(input_df, sink)
 
-                # Track statistics
+
                 write_stats = self.storage.write_stats.get(sink_name, {})
                 self.execution_stats["stages"]["storage"]["sinks"].append({
                     "name": sink_name,
@@ -348,7 +347,7 @@ class MetadataPipeline:
             logger.info(f"Dataflow: {dataflow_name} (v{dataflow_version})")
             logger.info(f"Description: {dataflow.get('description', 'N/A')}")
 
-            # Execute pipeline stages in order
+
             self.execute_ingestion(dataflow)
             self.execute_transformations(dataflow)
             self.execute_storage(dataflow)

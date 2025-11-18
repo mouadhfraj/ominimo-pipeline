@@ -1,8 +1,9 @@
 import { StatusBadge } from "@/components/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { 
+import {
   Table,
   TableBody,
   TableCell,
@@ -108,8 +109,9 @@ const PipelineRuns = () => {
               <TableRow>
                 <TableHead>Pipeline ID</TableHead>
                 <TableHead>Metadata</TableHead>
+                <TableHead>Method</TableHead>
                 <TableHead>Status</TableHead>
-
+                <TableHead>Valid/Total</TableHead>
                 <TableHead>Start Time</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -125,7 +127,26 @@ const PipelineRuns = () => {
                     {run.metadata_name}
                   </TableCell>
                   <TableCell>
+                    <Badge variant={run.execution_method === "airflow" ? "default" : "secondary"}>
+                      {run.execution_method || "direct"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
                     <StatusBadge status={run.status} />
+                  </TableCell>
+                  <TableCell>
+                    {run.valid_records !== undefined && run.total_records !== undefined ? (
+                      <span className="text-sm">
+                        {run.valid_records}/{run.total_records}
+                        {run.valid_percentage !== undefined && (
+                          <span className="text-xs text-muted-foreground ml-1">
+                            ({run.valid_percentage.toFixed(1)}%)
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {new Date(run.start_time).toLocaleString()}
