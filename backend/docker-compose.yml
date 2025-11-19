@@ -93,7 +93,6 @@ services:
       - DATABASE_URL=postgresql://ominimo:ominimo123@postgres:5432/ominimo_pipeline
     volumes:
       - ./src:/app/src
-      - ./metadata:/app/metadata
       - ./data:/app/data
       - ./logs:/app/logs
       - ./backend:/app/backend
@@ -138,7 +137,6 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
-      - ./metadata:/opt/airflow/metadata
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
       - ./airflow-data:/opt/airflow
@@ -174,7 +172,6 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
-      - ./metadata:/opt/airflow/metadata
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
     depends_on:
