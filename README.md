@@ -60,7 +60,8 @@ cd ominimo-pipeline
 
 ### 2. Build Custom Airflow Image
 ```bash
-docker build -t my-airflow-image -f docker/Dockerfile.airflow .
+cd backend
+docker build -t my-airflow-image -f docker/Dockerfile_airflow .
 ```
 
 ### 3. Start All Services
