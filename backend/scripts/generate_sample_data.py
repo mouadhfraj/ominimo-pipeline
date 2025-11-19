@@ -183,7 +183,7 @@ if __name__ == "__main__":
 
     print()
     print("=" * 80)
-    print("✅ Data generation complete!")
+    print("Data generation complete!")
     print("=" * 80)
     print()
     print("Next steps:")

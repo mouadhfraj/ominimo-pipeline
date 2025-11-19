@@ -175,7 +175,7 @@ class DataValidator:
         
         logger.info(f"Starting validation on {df.count()} records with {len(validations)} rules")
         
-        # Apply all validations dynamically
+
         validated_df = df
         validation_columns = []
         
@@ -183,7 +183,7 @@ class DataValidator:
             field = validation_config["field"]
             rules = validation_config.get("validations", [])
             
-            # Each rule can be a string or a dict with parameters
+
             for rule in rules:
                 if isinstance(rule, str):
                     rule_name = rule
@@ -196,10 +196,10 @@ class DataValidator:
                     logger.warning(f"Invalid rule format: {rule}")
                     continue
                 
-                # Get validator from registry
+
                 validator = self.registry.get(rule_name)
                 
-                # Create validation column
+
                 col_name = f"_val_{field}_{rule_name}"
                 validation_expr = validator(validated_df, field, rule_params)
                 validated_df = validated_df.withColumn(col_name, validation_expr)
@@ -229,36 +229,42 @@ class DataValidator:
         validation_columns: List[str],
         validations: List[Dict]
     ) -> DataFrame:
-        """Create aggregated validation errors map"""
-        
+        """Create aggregated validation errors map - FIXED VERSION"""
+
         # Build field -> column mapping
         field_to_cols = {}
         for val_col in validation_columns:
             # Extract field name from column name pattern: _val_{field}_{rule}
             parts = val_col.split("_")
             if len(parts) >= 3:
-                field = "_".join(parts[2:-1])  # Handle fields with underscores
+                field = "_".join(parts[2:-1])
                 if field not in field_to_cols:
                     field_to_cols[field] = []
                 field_to_cols[field].append(val_col)
-        
-        # Create map expression dynamically
-        map_entries = []
+
+
+        map_keys = []
+        map_values = []
+
         for field, cols in field_to_cols.items():
-            # Concatenate all errors for this field
-            error_expr = F.coalesce(
-                *[F.col(col) for col in cols]
-            )
-            map_entries.extend([F.lit(field), error_expr])
-        
-        # Create the validation_errors map
-        if map_entries:
-            df = df.withColumn("_temp_map", F.create_map(*map_entries))
-            
-            # Filter out null values from map
+
+            error_expr = F.coalesce(*[F.col(col) for col in cols])
+            map_keys.append(F.lit(field))
+            map_values.append(error_expr)
+
+
+        if map_keys:
+
+            keys_array = F.array(*map_keys)
+            values_array = F.array(*map_values)
+
+
+            df = df.withColumn("_temp_map", F.map_from_arrays(keys_array, values_array))
+
+
             df = df.withColumn(
                 "validation_errors",
-                F.expr("filter(_temp_map, (k, v) -> v is not null)")
+                F.expr("map_filter(_temp_map, (k, v) -> v is not null)")
             )
             
             # Count errors
@@ -272,7 +278,7 @@ class DataValidator:
             df = df.withColumn("validation_errors", F.create_map())
             df = df.withColumn("_validation_error_count", F.lit(0))
         
-        # Drop temporary validation columns
+
         df = df.drop(*validation_columns)
         
         return df

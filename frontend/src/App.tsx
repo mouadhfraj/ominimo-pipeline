@@ -9,7 +9,6 @@ import PipelineRuns from "./pages/PipelineRuns";
 import Metadata from "./pages/Metadata";
 import ExecutePipeline from "./pages/ExecutePipeline";
 import Logs from "./pages/Logs";
-import Health from "./pages/Health";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,7 +26,7 @@ const App = () => (
             <Route path="metadata" element={<Metadata />} />
             <Route path="execute" element={<ExecutePipeline />} />
             <Route path="logs" element={<Logs />} />
-            <Route path="health" element={<Health />} />
+
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

@@ -10,41 +10,35 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { MetadataFile } from "@/types/pipeline";
-import { FileJson, Upload, Download, Eye, Trash2, Search } from "lucide-react";
-import { useState } from "react";
+import { FileJson, Upload, Download, Trash2, Search, RefreshCw, AlertCircle } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
-
-// Mock data
-const mockMetadata: MetadataFile[] = [
-  {
-    name: "motor_insurance_config_v2.json",
-    path: "/metadata/motor_insurance_config_v2.json",
-    size: 15420,
-    created_at: "2024-01-10T14:30:00Z",
-    version: "2.0",
-    dataflows: 5,
-  },
-  {
-    name: "claims_processing_v1.json",
-    path: "/metadata/claims_processing_v1.json",
-    size: 8930,
-    created_at: "2024-01-08T10:15:00Z",
-    version: "1.0",
-    dataflows: 3,
-  },
-  {
-    name: "premium_calculation_v3.json",
-    path: "/metadata/premium_calculation_v3.json",
-    size: 12340,
-    created_at: "2024-01-05T16:45:00Z",
-    version: "3.0",
-    dataflows: 4,
-  },
-];
+import { api } from "@/services/api";
+import MetadataGuide from "@/components/MetadataGuide";
+import { StatusBadge } from "@/components/StatusBadge";
 
 const Metadata = () => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [metadata] = useState<MetadataFile[]>(mockMetadata);
+  const [metadata, setMetadata] = useState<MetadataFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchMetadata = async () => {
+    try {
+      setLoading(true);
+      const data = await api.listMetadata();
+      setMetadata(data);
+    } catch (error) {
+      toast.error("Failed to fetch metadata files");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMetadata();
+  }, []);
 
   const filteredMetadata = metadata.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -57,16 +51,63 @@ const Metadata = () => {
   };
 
   const handleUpload = () => {
-    toast.info("Upload functionality will be implemented with backend API");
+    fileInputRef.current?.click();
   };
 
-  const handleDownload = (file: MetadataFile) => {
-    toast.success(`Downloading ${file.name}`);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      await api.uploadMetadata(file);
+      toast.success(`${file.name} uploaded successfully`);
+      fetchMetadata();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to upload metadata");
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
-  const handleDelete = (file: MetadataFile) => {
-    toast.success(`Deleted ${file.name}`);
+  const handleDownload = async (file: MetadataFile) => {
+    try {
+      const metadata = await api.getMetadata(file.name);
+      const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${file.name}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${file.name}`);
+    } catch (error) {
+      toast.error("Failed to download metadata");
+    }
   };
+
+  const handleDelete = async (file: MetadataFile) => {
+    if (!confirm(`Are you sure you want to deactivate "${file.name}"?`)) {
+      return;
+    }
+
+    try {
+      await api.deleteMetadata(file.name, false);
+      toast.success("Metadata deactivated successfully");
+      fetchMetadata();
+    } catch (error) {
+      toast.error("Failed to delete metadata");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -77,11 +118,27 @@ const Metadata = () => {
             Upload and manage pipeline configuration files
           </p>
         </div>
-        <Button onClick={handleUpload} className="gap-2">
-          <Upload className="h-4 w-4" />
-          Upload Metadata
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={fetchMetadata} variant="outline" size="sm">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={handleUpload} className="gap-2">
+            <Upload className="h-4 w-4" />
+            Upload Metadata
+          </Button>
+        </div>
       </div>
+
+
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileChange}
+        className="hidden"
+      />
 
       <Card>
         <CardHeader>
@@ -102,54 +159,62 @@ const Metadata = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Description</TableHead>
                 <TableHead>Version</TableHead>
-                <TableHead>Dataflows</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredMetadata.map((file) => (
-                <TableRow key={file.path}>
+                <TableRow key={file.name}>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <FileJson className="h-4 w-4 text-primary" />
                       <span className="font-medium">{file.name}</span>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-muted-foreground">
-                      v{file.version}
+                  <TableCell className="max-w-md">
+                    <span className="text-sm text-muted-foreground truncate block">
+                      {file.description || "No description"}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <span className="text-sm">{file.dataflows} flows</span>
+                    <span className="text-sm text-muted-foreground">
+                      {file.version || "N/A"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {file.is_active ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                        Inactive
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {formatFileSize(file.size)}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(file.created_at).toLocaleDateString()}
+                    {new Date(file.updated_at).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="sm">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleDownload(file)}
                       >
                         <Download className="h-4 w-4" />
                       </Button>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleDelete(file)}
+                        disabled={!file.is_active}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>
@@ -159,6 +224,7 @@ const Metadata = () => {
           </Table>
         </CardContent>
       </Card>
+        <MetadataGuide />
     </div>
   );
 };

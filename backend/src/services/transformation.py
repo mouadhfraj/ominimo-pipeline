@@ -300,10 +300,10 @@ class DataTransformer:
             function = field_config["function"]
             func_params = field_config.copy()
             
-            # Get transformation from registry
+
             transformer = self.registry.get(function)
             
-            # Apply transformation
+
             df = df.withColumn(field_name, transformer(df, func_params))
             logger.debug(f"Added field: {field_name} using {function}")
         
@@ -357,12 +357,12 @@ class DataTransformer:
     
     def _handle_join(self, df: DataFrame, params: Dict) -> DataFrame:
         """Join with another dataframe"""
-        # This requires access to other dataframes - handle in pipeline
+
         raise NotImplementedError("Join transformation handled at pipeline level")
     
     def _handle_union(self, df: DataFrame, params: Dict) -> DataFrame:
         """Union with another dataframe"""
-        # This requires access to other dataframes - handle in pipeline
+
         raise NotImplementedError("Union transformation handled at pipeline level")
     
     def _handle_aggregate(self, df: DataFrame, params: Dict) -> DataFrame:
