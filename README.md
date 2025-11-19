@@ -43,7 +43,7 @@ A comprehensive, production-ready data pipeline platform for motor insurance pol
 ---
 
 ## Architecture
-![Architecture Diagram](Untitled Diagram.drawio.png)
+![Architecture Diagram](architecture.png)
 
 
 
